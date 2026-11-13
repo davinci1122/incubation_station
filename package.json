@@ -1,0 +1,16 @@
+{
+  "name": "internet-cabinet",
+  "private": true,
+  "packageManager": "pnpm@10.28.0",
+  "engines": { "node": ">=22.18" },
+  "scripts": {
+    "test": "node --test \"packages/*/src/**/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "pnpm --filter @cabinet/web build",
+    "dev": "pnpm --filter @cabinet/web dev"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.8.0"
+  }
+}

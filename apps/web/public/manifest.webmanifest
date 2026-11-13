@@ -1,0 +1,12 @@
+{
+  "name": "INTERNET CABINET",
+  "short_name": "Cabinet",
+  "description": "A personal archive of the web.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#f5f3ed",
+  "theme_color": "#f5f3ed",
+  "lang": "ja",
+  "icons": []
+}

@@ -1,0 +1,22 @@
+node_modules/
+.next/
+out/
+dist/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+
+# secrets: never commit
+.env
+.env.*
+!.env.example
+.dev.vars
+.clasprc.json
+.clasp.json
+*.pem
+*.key
+*credentials*.json
+*service-account*.json
+client_secret*.json
+
+.DS_Store
