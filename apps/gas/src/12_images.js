@@ -55,3 +55,13 @@ function itemsSetImage_(db, user, p) {
   var url = MANUAL_IMAGE_PREFIX + file.getId() + "&sz=w1200";
   return { item: publicRow_(db.update("items", item, { image_url: url, updated_at: now_() })) };
 }
+
+/**
+ * Googleドライブの権限を承認する。エディタの関数選択で「authorizeDrive」を選んで実行する。
+ * 承認画面はドライブを実際に呼んだときにしか出ないため、setup とは別に用意している。
+ */
+function authorizeDrive() {
+  var folder = imageFolder_();
+  console.log("Drive の権限を確認しました: " + folder.getId());
+  return "Googleドライブの権限を確認しました。";
+}
