@@ -265,3 +265,92 @@ test("整理シート: 書き出し、チェックした行だけ反映する", 
   assert.equal(all.tables.item_tags.filter((l: any) => l.item_id === b.id).length, 0);
   assert.equal(rowOf(a.id)[col("apply")], false);
 });
+
+const PAGE = `<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><title>Fallback &amp; Title</title>
+<meta property="og:title" content="展示空間の動線設計 &quot;ノート&quot;">
+<meta name="description" content="会場構成の考え方をまとめた記事。">
+<meta property="og:image" content="/img/cover.jpg">
+<meta property="og:type" content="article">
+<meta property="article:published_time" content="2026-05-01T09:00:00+09:00">
+<link rel="shortcut icon" href="favicon.png">
+<script>var x = "<meta property='og:title' content='ignored'>";</script>
+</head><body><nav>メニュー ホーム</nav><main><h1>見出し</h1><p>本文の一段落目です。${"あ".repeat(300)}</p><script>alert(1)</script></main><footer>フッター</footer></body></html>`;
+
+test("メタデータ抽出: OGP・相対URL・抜粋・文字参照", () => {
+  const env = createEnv();
+  const m = plain(env.ctx.parseMeta_(PAGE, "https://example.com/blog/post"));
+  assert.equal(m.title, '展示空間の動線設計 "ノート"');
+  assert.equal(m.description, "会場構成の考え方をまとめた記事。");
+  assert.equal(m.image_url, "https://example.com/img/cover.jpg");
+  assert.equal(m.favicon_url, "https://example.com/blog/favicon.png");
+  assert.equal(m.content_type, "article");
+  assert.equal(m.lang, "ja");
+  assert.equal(m.published_at, "2026-05-01T00:00:00.000Z");
+  assert.ok(m.excerpt.startsWith("見出し 本文の一段落目です。"));
+  assert.ok(!m.excerpt.includes("メニュー") && !m.excerpt.includes("alert") && !m.excerpt.includes("フッター"));
+  assert.ok(m.excerpt.length <= 1000);
+  const bare = plain(env.ctx.parseMeta_("<html><head><title> Only  title </title></head><body>hello</body></html>", "https://a.example/x/y"));
+  assert.deepEqual([bare.title, bare.image_url, bare.favicon_url, bare.content_type, bare.excerpt], ["Only title", "", "https://a.example/favicon.ico", "page", "hello"]);
+  assert.equal(plain(env.ctx.parseMeta_('<meta property="og:image" content="javascript:alert(1)">', "https://a.example/")).image_url, "");
+});
+
+test("内部向けの宛先は取得しない", () => {
+  const env = createEnv();
+  for (const h of ["localhost", "127.0.0.1", "10.1.2.3", "169.254.169.254", "192.168.0.1", "172.20.0.1", "[::1]", "intranet", "db.internal", "0x7f.0.0.1", "2130706433", ""]) {
+    assert.equal(env.ctx.isBlockedHost_(h), true, h);
+  }
+  for (const h of ["example.com", "8.8.8.8", "www.loc.gov", "172.32.0.1"]) assert.equal(env.ctx.isBlockedHost_(h), false, h);
+  assert.equal(plain(env.ctx.fetchPageMeta_("http://169.254.169.254/latest")).error_code, "SSRF_BLOCKED");
+  env.pages.set("https://example.com/r", { code: 302, headers: { Location: "http://localhost/admin" } });
+  assert.equal(plain(env.ctx.fetchPageMeta_("https://example.com/r")).error_code, "SSRF_BLOCKED");
+});
+
+test("items.fetchMeta: 取得結果を item・capture・job に反映する", () => {
+  const env = ready();
+  env.pages.set("https://example.com/post?utm_source=x", { code: 301, headers: { Location: "/blog/post" } });
+  env.pages.set("https://example.com/blog/post", { code: 200, body: PAGE });
+  const { item } = env.call("items.create", url("post"));
+  const res = env.call("items.fetchMeta", { id: item.id });
+  assert.equal(res.ok, true);
+  assert.equal(res.item.title, '展示空間の動線設計 "ノート"');
+  assert.equal(res.item.image_url, "https://example.com/img/cover.jpg");
+  assert.equal(res.item.capture_status, "completed");
+  assert.equal(res.item.content_type, "article");
+  const all = env.call("sync.pull", {});
+  assert.equal(all.tables.captures[0].archive_status, "completed");
+  assert.equal(all.tables.captures[0].page_url, "https://example.com/blog/post");
+  assert.equal(all.tables.capture_jobs[0].status, "completed");
+  assert.equal(res.item.latest_capture_id, all.tables.captures[0].id);
+});
+
+test("items.fetchMeta: 手入力したタイトルは上書きしない。失敗は理由を記録し、再取得できる", () => {
+  const env = ready();
+  env.pages.set("https://example.com/a?utm_source=x", { code: 403 });
+  const { item } = env.call("items.create", { ...url("a"), title: "自分で付けた名前" });
+  let res = env.call("items.fetchMeta", { id: item.id });
+  assert.deepEqual([res.ok, res.error_code, res.item.capture_status, res.item.title], [false, "BLOCKED_ROBOTS", "failed", "自分で付けた名前"]);
+  env.pages.set("https://example.com/a?utm_source=x", { code: 200, body: PAGE });
+  env.call("items.refetch", { id: item.id });
+  res = env.call("items.fetchMeta", { id: item.id });
+  assert.deepEqual([res.ok, res.item.capture_status, res.item.title], [true, "completed", "自分で付けた名前"]);
+  assert.equal(res.item.description, "会場構成の考え方をまとめた記事。");
+  const captures = env.call("sync.pull", {}).tables.captures;
+  assert.deepEqual(captures.map((c: any) => c.archive_status).sort(), ["completed", "failed"]);
+
+  env.pages.set("https://example.com/b?utm_source=x", { code: 200, throws: "Request timed out" });
+  const b = env.call("items.create", url("b")).item;
+  assert.equal(env.call("items.fetchMeta", { id: b.id }).error_code, "TIMEOUT");
+  env.pages.set("https://example.com/c?utm_source=x", { code: 200, headers: { "Content-Type": "application/pdf" } });
+  const c = env.call("items.create", url("c")).item;
+  assert.equal(env.call("items.fetchMeta", { id: c.id }).item.content_type, "pdf");
+});
+
+test("初期セットアップはメニュー用トリガーを1つだけ登録する", () => {
+  const env = createEnv();
+  env.ctx.menuSetup();
+  env.ctx.menuSetup();
+  assert.deepEqual(env.triggers, ["cabinetMenu"]);
+  assert.equal(env.props.get("ALLOWED_EMAIL"), "owner@example.com");
+  assert.equal(env.menus.n, 2);
+});

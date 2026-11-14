@@ -13,6 +13,7 @@ function handle_(db, user, action, params) {
     case "items.update": return itemsUpdate_(db, user, p);
     case "items.delete": return softDelete_(db, user, "items", p, true);
     case "items.restore": return itemsRestore_(db, user, p);
+    case "items.refetch": return itemsRefetch_(db, user, p);
     case "items.setTags": return { item_id: p.id, tags: setItemTags_(db, user, p.id, p.tags) };
     case "tags.update": return tagsUpdate_(db, user, p);
     case "tags.delete": return tagsDelete_(db, user, p);
@@ -334,4 +335,20 @@ function collectionsReorder_(db, user, p) {
     if (l.sort_order !== String(i + 1)) db.update("collection_items", l, { sort_order: String(i + 1) });
   });
   return { collection_id: c.id, count: links.length };
+}
+
+/** 再取得の準備。新しい取得履歴（capture / job）を作る。実際の取得は items.fetchMeta で行う。 */
+function itemsRefetch_(db, user, p) {
+  var item = ownLive_(db, user, "items", p.id);
+  var now = now_();
+  var capture = db.insert("captures", {
+    id: Utilities.getUuid(), item_id: item.id, user_id: user.id, captured_at: now,
+    archive_status: "pending", page_url: item.original_url
+  });
+  db.insert("capture_jobs", {
+    id: Utilities.getUuid(), item_id: item.id, capture_id: capture.id, user_id: user.id,
+    status: "pending", trigger: "recapture", retry_count: "0", queued_at: now
+  });
+  db.update("items", item, { capture_status: "pending", updated_at: now });
+  return { item: publicRow_(item) };
 }

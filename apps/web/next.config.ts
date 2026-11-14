@@ -9,6 +9,7 @@ const config: NextConfig = {
   trailingSlash: true,
   images: { unoptimized: true },
   reactStrictMode: true,
+  transpilePackages: ["@cabinet/url"],
 };
 
 export default config;

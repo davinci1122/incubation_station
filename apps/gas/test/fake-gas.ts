@@ -86,7 +86,8 @@ export class FakeSpreadsheet {
 export type Env = {
   ctx: any; ss: FakeSpreadsheet; props: Map<string, string>; cache: Map<string, string>;
   tokens: Map<string, { code: number; body: unknown }>; fetchCount: { n: number }; activeEmail: { value: string };
-  alerts: string[];
+  alerts: string[]; pages: Map<string, { code: number; headers?: Record<string, string>; body?: string; throws?: string }>;
+  triggers: string[]; menus: { n: number };
 };
 
 export function createEnv(): Env {
@@ -97,15 +98,22 @@ export function createEnv(): Env {
   const fetchCount = { n: 0 };
   const activeEmail = { value: "owner@example.com" };
   const alerts: string[] = [];
+  const pages: Env["pages"] = new Map();
+  const triggers: string[] = [];
+  const menus = { n: 0 };
   let locked = false;
   const ui = {
     ButtonSet: { OK: "OK", OK_CANCEL: "OK_CANCEL" }, Button: { OK: "OK", CANCEL: "CANCEL" },
     alert: (...args: string[]) => { alerts.push(args.filter((a) => typeof a === "string").join(" | ")); return "OK"; },
-    createMenu: () => { const m: any = { addItem: () => m, addSeparator: () => m, addToUi: () => undefined }; return m; },
+    createMenu: () => { const m: any = { addItem: () => m, addSeparator: () => m, addToUi: () => { menus.n++; } }; return m; },
   };
   const sandbox: Record<string, unknown> = {
     console: { error: () => undefined, log: () => undefined },
-    JSON, Math, Date, Object, Array, String, Number, Error, encodeURIComponent,
+    JSON, Math, Date, Object, Array, String, Number, Error, RegExp, encodeURIComponent, parseInt, isNaN,
+    ScriptApp: {
+      getProjectTriggers: () => triggers.map((h) => ({ getHandlerFunction: () => h })),
+      newTrigger: (h: string) => { const b: any = { forSpreadsheet: () => b, onOpen: () => b, create: () => { triggers.push(h); } }; return b; },
+    },
     SpreadsheetApp: { getActiveSpreadsheet: () => ss, getUi: () => ui },
     LockService: { getScriptLock: () => ({ tryLock: () => { if (locked) return false; locked = true; return true; }, releaseLock: () => { locked = false; } }) },
     PropertiesService: { getScriptProperties: () => ({ getProperty: (k: string) => props.get(k) ?? null, setProperty: (k: string, v: string) => { props.set(k, v); } }) },
@@ -118,6 +126,12 @@ export function createEnv(): Env {
     },
     UrlFetchApp: {
       fetch: (url: string) => {
+        if (!url.startsWith("https://oauth2.googleapis.com/tokeninfo")) {
+          const page = pages.get(url);
+          if (!page) throw new Error("DNS error: " + url);
+          if (page.throws) throw new Error(page.throws);
+          return { getResponseCode: () => page.code, getHeaders: () => page.headers ?? { "Content-Type": "text/html; charset=utf-8" }, getContentText: () => page.body ?? "" };
+        }
         fetchCount.n++;
         const token = decodeURIComponent(url.split("id_token=")[1] ?? "");
         const hit = tokens.get(token) ?? { code: 400, body: { error: "invalid_token" } };
@@ -133,5 +147,5 @@ export function createEnv(): Env {
   const dir = join(import.meta.dirname, "..", "src");
   const source = readdirSync(dir).filter((f) => f.endsWith(".js")).sort().map((f) => readFileSync(join(dir, f), "utf8")).join("\n");
   vm.runInContext(source, ctx, { filename: "gas-bundle.js" });
-  return { ctx, ss, props, cache, tokens, fetchCount, activeEmail, alerts };
+  return { ctx, ss, props, cache, tokens, fetchCount, activeEmail, alerts, pages, triggers, menus };
 }

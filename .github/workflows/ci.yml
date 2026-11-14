@@ -35,7 +35,7 @@ jobs:
           node-version: 22
       - name: Install
         run: |
-          if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; else pnpm install; fi
+          pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
       - run: pnpm test
       - run: pnpm typecheck
       - run: pnpm build

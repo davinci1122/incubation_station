@@ -5,6 +5,7 @@ function database_() {
 /** 認証済みの利用者として1操作を実行する。書き込みはロックで直列化する。 */
 function run_(user, action, params) {
   if (READ_ACTIONS[action]) return handle_(database_(), user, action, params);
+  if (action === "items.fetchMeta") return fetchMetaAction_(user, params || {});
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(20000)) throw err_("BUSY", "混み合っています。少し待って再試行してください。");
   try {
@@ -53,13 +54,19 @@ function api(request) {
 
 // ---------- スプレッドシートのメニュー ----------
 
-function onOpen() {
+/** メニューを追加する。インストール型トリガーから呼ばれる（複数アカウントでログイン中でも動く）。 */
+function cabinetMenu() {
   SpreadsheetApp.getUi().createMenu("Cabinet")
     .addItem("初期セットアップ", "menuSetup")
     .addSeparator()
     .addItem("整理シートを更新", "menuCurationRefresh")
     .addItem("整理を反映", "menuCurationApply")
     .addToUi();
+}
+
+function ensureMenuTrigger_() {
+  var exists = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === "cabinetMenu"; });
+  if (!exists) ScriptApp.newTrigger("cabinetMenu").forSpreadsheet(SpreadsheetApp.getActiveSpreadsheet()).onOpen().create();
 }
 
 function menuUser_() {
@@ -71,6 +78,8 @@ function menuSetup() {
   var p = props_();
   if (!p.getProperty("ALLOWED_EMAIL")) p.setProperty("ALLOWED_EMAIL", Session.getActiveUser().getEmail());
   var result = setupDatabase_(SpreadsheetApp.getActiveSpreadsheet());
+  ensureMenuTrigger_();
+  cabinetMenu();
   ui.alert("セットアップ完了", result.created.length > 0 ? "作成したシート: " + result.created.join(", ") : "すべてのシートは作成済みです。", ui.ButtonSet.OK);
 }
 
