@@ -12,7 +12,7 @@ import { Orbs } from "@/components/Orbs";
 import { ApiError } from "@/lib/api";
 import { getToken, signOut, subscribeToken } from "@/lib/google";
 import { createCollection, createItem, deleteCollection, deleteItem, refetchItem, setItemTags, toggleCollection, updateCollection, updateItem } from "@/lib/mutate";
-import { HOME, readRoute, routeHref, type Route, type Sort } from "@/lib/route";
+import { HOME, readRoute, routeHref, type HomeRoute, type Route, type Sort } from "@/lib/route";
 import { clearLocal, getSnapshot, restore, subscribe, sync, type Row, type Snapshot } from "@/lib/store";
 
 const EMPTY: Snapshot = {
@@ -216,8 +216,8 @@ export default function HomePage() {
     newCollection: (itemId) => setDialog({ kind: "new", itemId }),
   };
 
-  const homeRoute = route.view === "home" ? route : HOME;
-  const setHome = (patch: Partial<{ tag: string; fav: boolean; sort: Sort }>) => go({ ...homeRoute, ...patch, view: "home" });
+  const homeRoute: HomeRoute = route.view === "home" ? route : HOME;
+  const setHome = (patch: Partial<Omit<HomeRoute, "view">>) => go({ ...homeRoute, ...patch });
   const NAV: { label: string; route: Route; active: boolean }[] = [
     { label: "Home", route: HOME, active: route.view === "home" },
     { label: "Collections", route: { view: "collections" }, active: route.view === "collections" || route.view === "collection" },

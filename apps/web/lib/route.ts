@@ -1,12 +1,13 @@
 // 画面の状態をURLに載せる（?v=… は画面、#item=… は詳細パネル）。ブラウザの戻る・進むでそのまま動く。
 export type Sort = "new" | "old" | "title";
+export type HomeRoute = { view: "home"; tag: string; fav: boolean; sort: Sort };
 export type Route =
-  | { view: "home"; tag: string; fav: boolean; sort: Sort }
+  | HomeRoute
   | { view: "collections" }
   | { view: "collection"; id: string }
   | { view: "tags" };
 
-export const HOME: Route = { view: "home", tag: "", fav: false, sort: "new" };
+export const HOME: HomeRoute = { view: "home", tag: "", fav: false, sort: "new" };
 
 export function readRoute(): Route {
   const q = new URLSearchParams(window.location.search);
