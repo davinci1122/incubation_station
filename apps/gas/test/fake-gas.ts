@@ -124,10 +124,6 @@ export function createEnv(): Env {
     createMenu: () => { const m: any = { addItem: () => m, addSeparator: () => m, addToUi: () => { menus.n++; } }; return m; },
   };
   const ctxRef: { ctx: any } = { ctx: null };
-  const folderObj = (id: string) => ({ getId: () => id, createFile: (blob: any) => {
-    const fid = randomUUID(); drive.files.set(fid, { name: blob.name, mime: blob.mime, shared: false, trashed: false });
-    return { getId: () => fid, setSharing: () => { if (drive.denySharing) throw new Error("policy"); drive.files.get(fid)!.shared = true; }, setTrashed: () => { drive.files.get(fid)!.trashed = true; } };
-  } });
   const sandbox: Record<string, unknown> = {
     console: { error: () => undefined, log: () => undefined },
     uiAvailable: true,
@@ -167,11 +163,35 @@ export function createEnv(): Env {
         return { getResponseCode: () => hit.code, getContentText: () => JSON.stringify(hit.body) };
       },
     },
-    DriveApp: {
-      Access: { ANYONE_WITH_LINK: "ANYONE_WITH_LINK" }, Permission: { VIEW: "VIEW" },
-      createFolder: (name: string) => { if (drive.denyAccess) throw new Error("permission"); const id = randomUUID(); drive.folders.set(id, name); return folderObj(id); },
-      getFolderById: (id: string) => { if (drive.denyAccess || !drive.folders.has(id)) throw new Error("permission"); return folderObj(id); },
-      getFileById: (id: string) => { const f = drive.files.get(id); if (!f) throw new Error("not found"); return { setTrashed: () => { f.trashed = true; } }; },
+    Drive: {
+      Files: {
+        create: (res: any, media: any) => {
+          if (drive.denyAccess) throw new Error("指定された権限では Drive API を呼び出すことができません。");
+          const id = randomUUID();
+          if (res.mimeType === "application/vnd.google-apps.folder") { drive.folders.set(id, res.name); return { id }; }
+          drive.files.set(id, { name: res.name, mime: media.mime, shared: false, trashed: false });
+          return { id };
+        },
+        get: (id: string) => {
+          if (drive.denyAccess || !drive.folders.has(id)) throw new Error("not found");
+          return { id, trashed: false };
+        },
+        update: (res: any, id: string) => {
+          const f = drive.files.get(id);
+          if (!f) throw new Error("not found");
+          if (res.trashed) f.trashed = true;
+          return { id };
+        },
+      },
+      Permissions: {
+        create: (_res: any, id: string) => {
+          if (drive.denySharing) throw new Error("policy");
+          const f = drive.files.get(id);
+          if (!f) throw new Error("not found");
+          f.shared = true;
+          return { id };
+        },
+      },
     },
     ContentService: {
       MimeType: { JSON: "application/json" },
