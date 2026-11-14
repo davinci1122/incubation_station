@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { uploadItemImage } from "@/lib/image";
 import type { Row } from "@/lib/store";
 import { shortDate } from "./Card";
 import { Orbs } from "./Orbs";
@@ -43,13 +44,43 @@ export function ItemPanel({ item, tags, collections, memberOf, closing, actions,
   const [tagText, setTagText] = useState(tags.join(", "));
   const [broken, setBroken] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
+  const fileInput = useRef<HTMLInputElement>(null);
 
   // 別のアイテムに切り替わったとき、または同期で値が変わったときに入力欄を合わせる。
   useEffect(() => { setTitle(item.title ?? ""); }, [id, item.title]);
   useEffect(() => { setNote(item.user_note ?? ""); }, [id, item.user_note]);
   const joined = tags.join(", ");
   useEffect(() => { setTagText(joined); }, [id, joined]);
-  useEffect(() => { setBroken(false); setConfirming(false); setEditingTitle(false); }, [id]);
+  useEffect(() => { setBroken(false); setConfirming(false); setEditingTitle(false); setUploadError(""); }, [id]);
+
+  const setImageFile = async (file: Blob) => {
+    if (uploading) return;
+    setUploading(true);
+    setUploadError("");
+    try {
+      await uploadItemImage(id, file);
+      setBroken(false);
+    } catch (e) {
+      setUploadError(e instanceof Error ? e.message : "画像を設定できませんでした。");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // 画像をコピーして貼り付けると、このアイテムの画像にする（文字の貼り付けには反応しない）。
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      if (Array.from(e.clipboardData?.types ?? []).includes("text/plain")) return;
+      const file = Array.from(e.clipboardData?.files ?? []).find((f) => f.type.startsWith("image/"));
+      if (!file) return;
+      e.preventDefault();
+      void setImageFile(file);
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  });
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -86,6 +117,25 @@ export function ItemPanel({ item, tags, collections, memberOf, closing, actions,
           <img src={image} alt="" referrerPolicy="no-referrer" onError={() => setBroken(true)} className="relative block h-auto w-full" />
         )}
       </a>
+
+      <div className="-mt-3 flex flex-wrap items-center gap-2.5">
+        <button type="button" onClick={() => fileInput.current?.click()} disabled={uploading} className={GHOST}>
+          {uploading ? "画像を設定中…" : "画像を選ぶ"}
+        </button>
+        <input
+          ref={fileInput}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (file) void setImageFile(file);
+          }}
+        />
+        <span className="text-xs text-ink-secondary">画像をコピーして、この画面で貼り付けることもできます</span>
+        {uploadError && <span role="alert" className="w-full text-xs text-danger">{uploadError}</span>}
+      </div>
 
       <div>
         {editingTitle ? (

@@ -233,7 +233,7 @@ function fetchMetaAction_(user, p) {
         m.image_url = screenshotUrl_(result.page_url || item.original_url);
       }
       ["description", "image_url", "favicon_url", "published_at", "lang", "content_type", "excerpt"].forEach(function (k) {
-        if (m[k] !== undefined && m[k] !== "") patch[k] = m[k];
+        if (m[k] !== undefined && m[k] !== "" && !(k === "image_url" && isManualImage_(item.image_url))) patch[k] = m[k];
       });
       if (m.title && item.title === "") patch.title = m.title;
     }

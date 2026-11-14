@@ -101,6 +101,7 @@ export type Env = {
   tokens: Map<string, { code: number; body: unknown }>; fetchCount: { n: number }; activeEmail: { value: string };
   alerts: string[]; pages: Map<string, { code: number; headers?: Record<string, string>; body?: string; throws?: string }>;
   triggers: string[]; menus: { n: number }; ai: { handler: null | ((body: any) => { code: number; body: unknown }); calls: number };
+  drive: { files: Map<string, { name: string; mime: string; shared: boolean; trashed: boolean }>; folders: Map<string, string>; denySharing: boolean };
 };
 
 export function createEnv(): Env {
@@ -109,6 +110,7 @@ export function createEnv(): Env {
   const cache = new Map<string, string>();
   const tokens = new Map<string, { code: number; body: unknown }>();
   const fetchCount = { n: 0 };
+  const drive = { files: new Map<string, { name: string; mime: string; shared: boolean; trashed: boolean }>(), folders: new Map<string, string>(), denySharing: false };
   const activeEmail = { value: "owner@example.com" };
   const alerts: string[] = [];
   const pages: Env["pages"] = new Map();
@@ -122,6 +124,10 @@ export function createEnv(): Env {
     createMenu: () => { const m: any = { addItem: () => m, addSeparator: () => m, addToUi: () => { menus.n++; } }; return m; },
   };
   const ctxRef: { ctx: any } = { ctx: null };
+  const folderObj = (id: string) => ({ getId: () => id, createFile: (blob: any) => {
+    const fid = randomUUID(); drive.files.set(fid, { name: blob.name, mime: blob.mime, shared: false, trashed: false });
+    return { getId: () => fid, setSharing: () => { if (drive.denySharing) throw new Error("policy"); drive.files.get(fid)!.shared = true; }, setTrashed: () => { drive.files.get(fid)!.trashed = true; } };
+  } });
   const sandbox: Record<string, unknown> = {
     console: { error: () => undefined, log: () => undefined },
     uiAvailable: true,
@@ -138,6 +144,8 @@ export function createEnv(): Env {
     Utilities: {
       DigestAlgorithm: { SHA_256: "sha256" }, Charset: { UTF_8: "utf8" },
       getUuid: () => randomUUID(),
+      newBlob: (bytes: any, mime: string, name: string) => ({ bytes, mime, name }),
+      base64Decode: (text: string) => [...Buffer.from(text, "base64")],
       computeDigest: (_alg: string, text: string) => [...createHash("sha256").update(text, "utf8").digest()].map((b) => (b > 127 ? b - 256 : b)),
     },
     UrlFetchApp: {
@@ -159,6 +167,12 @@ export function createEnv(): Env {
         return { getResponseCode: () => hit.code, getContentText: () => JSON.stringify(hit.body) };
       },
     },
+    DriveApp: {
+      Access: { ANYONE_WITH_LINK: "ANYONE_WITH_LINK" }, Permission: { VIEW: "VIEW" },
+      createFolder: (name: string) => { const id = randomUUID(); drive.folders.set(id, name); return folderObj(id); },
+      getFolderById: (id: string) => { if (!drive.folders.has(id)) throw new Error("not found"); return folderObj(id); },
+      getFileById: (id: string) => { const f = drive.files.get(id); if (!f) throw new Error("not found"); return { setTrashed: () => { f.trashed = true; } }; },
+    },
     ContentService: {
       MimeType: { JSON: "application/json" },
       createTextOutput: (text: string) => { const o: any = { text, setMimeType: () => o }; return o; },
@@ -169,5 +183,5 @@ export function createEnv(): Env {
   const dir = join(import.meta.dirname, "..", "src");
   const source = readdirSync(dir).filter((f) => f.endsWith(".js")).sort().map((f) => readFileSync(join(dir, f), "utf8")).join("\n");
   vm.runInContext(source, ctx, { filename: "gas-bundle.js" });
-  return { ctx, ss, props, cache, tokens, fetchCount, activeEmail, alerts, pages, triggers, menus, ai };
+  return { ctx, ss, props, cache, tokens, fetchCount, activeEmail, alerts, pages, triggers, menus, ai, drive };
 }
