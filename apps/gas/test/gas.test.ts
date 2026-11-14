@@ -420,3 +420,56 @@ test("画像が見つからないページはスクリーンショットのURL�
   const b = env.call("items.create", url("noimg2")).item;
   assert.equal(env.call("items.fetchMeta", { id: b.id }).item.image_url, "");
 });
+
+test("一括操作: タグの追加・コレクション追加と除外・削除", () => {
+  const env = ready();
+  const items = ["b1", "b2", "b3"].map((p) => env.call("items.create", url(p)).item);
+  env.call("items.setTags", { id: items[0].id, tags: ["keep"] });
+  const c = env.call("collections.create", { name: "Bulk" }).collection;
+  const ids = items.map((i) => i.id);
+  assert.equal(env.call("items.bulk", { ids, add_tags: ["New", "keep"], add_to_collection: c.id }).count, 3);
+  let all = env.call("sync.pull", {});
+  const live = (rows: any[]) => rows.filter((r) => r.deleted_at === "");
+  assert.equal(live(all.tables.item_tags).filter((l: any) => l.item_id === items[0].id).length, 2);
+  assert.equal(live(all.tables.item_tags).filter((l: any) => l.item_id === items[1].id).length, 2);
+  assert.equal(live(all.tables.tags).length, 2);
+  assert.equal(live(all.tables.collection_items).length, 3);
+  env.call("items.bulk", { ids: [ids[0]], remove_from_collection: c.id });
+  env.call("items.bulk", { ids: [ids[1], ids[2]], delete: true });
+  all = env.call("sync.pull", {});
+  assert.equal(live(all.tables.items).length, 1);
+  assert.equal(live(all.tables.collection_items).filter((l: any) => l.item_id === ids[0]).length, 0);
+  assert.equal(code(() => env.call("items.bulk", { ids: [] })), "INVALID");
+  assert.equal(code(() => env.call("items.bulk", { ids: ["missing"], delete: true })), "NOT_FOUND");
+});
+
+test("整理シート: 列の並びが違っても動き、コレクションも反映する", () => {
+  const env = ready();
+  // 旧版のシート（apply が途中にあり、コレクション列が右端に追加された状態）を再現する。
+  const sheet = env.ss.getSheetByName("curation")!;
+  sheet.data[0] = ["item_id", "title", "url", "domain", "content_type", "excerpt", "saved_at", "tags", "new_tags", "summary", "note", "apply", "collections", "new_collections"];
+  const a = env.call("items.create", { ...url("cc1"), title: "A" }).item;
+  const existing = env.call("collections.create", { name: "Architecture" }).collection;
+  env.call("collections.addItems", { collection_id: existing.id, item_ids: [a.id] });
+  env.ctx.curationRefresh_(env.ctx.database_(), env.user);
+  const header = sheet.data[0] as string[];
+  const col = (n: string) => header.indexOf(n);
+  const row = sheet.data.find((r) => r[col("item_id")] === a.id)!;
+  assert.equal(row[col("collections")], "Architecture");
+  assert.equal(row[col("apply")], false);
+  row[col("new_collections")] = "architecture, Ideas";
+  row[col("apply")] = true;
+  const preview = plain(env.ctx.curationApply_(env.ctx.database_(), env.user, true));
+  assert.deepEqual([preview.rows, preview.collectionChanges, preview.tagChanges], [1, 1, 0]);
+  env.ctx.menuCurationApply();
+  const all = env.call("sync.pull", {});
+  const names = all.tables.collections.filter((c: any) => c.deleted_at === "").map((c: any) => c.name).sort();
+  assert.deepEqual(names, ["Architecture", "Ideas"]);
+  assert.equal(all.tables.collection_items.filter((l: any) => l.item_id === a.id && l.deleted_at === "").length, 2);
+  assert.equal(row[col("apply")], false);
+  row[col("new_collections")] = "";
+  row[col("collections")] = "Architecture, Ideas";
+  row[col("apply")] = true;
+  env.ctx.menuCurationApply();
+  assert.equal(env.call("sync.pull", {}).tables.collection_items.filter((l: any) => l.deleted_at === "").length, 0);
+});

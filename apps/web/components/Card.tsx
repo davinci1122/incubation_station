@@ -13,7 +13,7 @@ export function shortDate(iso: string): string {
   return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`;
 }
 
-export function Card({ item, tags, index = 0, onOpen }: { item: Row; tags: string[]; index?: number; onOpen: () => void }) {
+export function Card({ item, tags, index = 0, selected, onOpen }: { item: Row; tags: string[]; index?: number; selected?: boolean; onOpen: () => void }) {
   const [broken, setBroken] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const id = item.id ?? "";
@@ -23,7 +23,7 @@ export function Card({ item, tags, index = 0, onOpen }: { item: Row; tags: strin
 
   return (
     <article className="anim-rise mb-7 break-inside-avoid" style={{ animationDelay: `${Math.min(index, 14) * 40}ms` }}>
-      <button type="button" onClick={onOpen} className="group block w-full cursor-pointer text-left">
+      <button type="button" onClick={onOpen} aria-pressed={selected} className="group block w-full cursor-pointer text-left">
         <div
           data-media={id}
           className="relative overflow-hidden rounded-[14px] bg-surface"
@@ -47,6 +47,12 @@ export function Card({ item, tags, index = 0, onOpen }: { item: Row; tags: strin
               {title}
             </span>
           )}
+          {selected !== undefined && (
+            <span aria-hidden="true" className={`absolute right-2.5 top-2.5 flex h-7 w-7 items-center justify-center rounded-full border text-sm transition-colors ${selected ? "border-ink bg-ink text-bg" : "border-white bg-white/70 text-transparent"}`}>
+              ✓
+            </span>
+          )}
+          {selected && <span aria-hidden="true" className="pointer-events-none absolute inset-0 rounded-[14px] ring-2 ring-inset ring-ink" />}
           {status === "pending" && (
             <span className="absolute left-2.5 top-2.5 rounded-full bg-white px-2 py-1 text-[11px]">取得中</span>
           )}

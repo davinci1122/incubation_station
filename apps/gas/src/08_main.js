@@ -103,6 +103,7 @@ function menuCurationRefresh() {
   var ui = SpreadsheetApp.getUi();
   var answer = ui.alert("整理シートを更新", "整理シートの内容を現在のデータで作り直します。未反映の編集は失われます。", ui.ButtonSet.OK_CANCEL);
   if (answer !== ui.Button.OK) return;
+  ensureSheet_(SpreadsheetApp.getActiveSpreadsheet(), CURATION_SHEET, CURATION_COLUMNS, false);
   var result = curationRefresh_(database_(), menuUser_());
   ui.alert(result.count + " 件を書き出しました。");
 }
@@ -115,7 +116,7 @@ function menuCurationApply() {
     ui.alert("反映する行がありません。apply 列にチェックを入れてください。");
     return;
   }
-  var message = "対象 " + preview.rows + " 行\nタグの変更 " + preview.tagChanges + " 件\n要約の変更 " + preview.summaryChanges + " 件\nメモの変更 " + preview.noteChanges + " 件"
+  var message = "対象 " + preview.rows + " 行\nタグの変更 " + preview.tagChanges + " 件\nコレクションの変更 " + preview.collectionChanges + " 件\n要約の変更 " + preview.summaryChanges + " 件\nメモの変更 " + preview.noteChanges + " 件"
     + (preview.skipped.length > 0 ? "\nスキップ " + preview.skipped.length + " 行" : "") + "\n\n反映しますか？";
   if (ui.alert("整理を反映", message, ui.ButtonSet.OK_CANCEL) !== ui.Button.OK) return;
 
@@ -127,7 +128,7 @@ function menuCurationApply() {
     result = curationApply_(db, user, false);
     db.flush();
     var sheet = db.sheet_(CURATION_SHEET);
-    result.appliedRows.forEach(function (r) { sheet.getRange(r, CURATION_COLUMNS.length, 1, 1).setValues([[false]]); });
+    result.appliedRows.forEach(function (r) { sheet.getRange(r, result.applyColumn, 1, 1).setValues([[false]]); });
   } finally {
     lock.releaseLock();
   }

@@ -3,6 +3,7 @@
 import { displayDomain, normalizeUrl } from "@cabinet/url";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { AddUrl } from "@/components/AddUrl";
+import { BulkBar, CollectionPicker, ReorderList } from "@/components/Bulk";
 import { Card } from "@/components/Card";
 import { CollectionsView, TagsView, type CollectionSummary } from "@/components/Collections";
 import { ItemPanel, type ItemActions } from "@/components/ItemPanel";
@@ -13,7 +14,7 @@ import { Orbs } from "@/components/Orbs";
 import { ApiError } from "@/lib/api";
 import { getToken, signOut, subscribeToken } from "@/lib/google";
 import { exportBookmarks, exportCsv, exportJson } from "@/lib/export";
-import { createCollection, createItem, deleteCollection, deleteItem, deleteTag, refetchItem, renameTag, restoreItem, setItemTags, toggleCollection, updateCollection, updateItem } from "@/lib/mutate";
+import { bulkItems, createCollection, createItem, deleteCollection, deleteItem, deleteTag, refetchItem, renameTag, reorderCollection, restoreItem, setItemTags, toggleCollection, updateCollection, updateItem } from "@/lib/mutate";
 import { closeTransition, openTransition, routeTransition } from "@/lib/transition";
 import { HOME, readRoute, routeHref, type HomeRoute, type Route, type Sort } from "@/lib/route";
 import { clearLocal, getSnapshot, restore, subscribe, sync, type Row, type Snapshot } from "@/lib/store";
@@ -43,6 +44,9 @@ export default function HomePage() {
   const [tagEditing, setTagEditing] = useState(false);
   const [tagDialog, setTagDialog] = useState<null | { id: string; name: string }>(null);
   const shareHandled = useRef(false);
+  const [selected, setSelected] = useState<Set<string> | null>(null);
+  const [bulkDialog, setBulkDialog] = useState<null | "tags" | "collection" | "newCollection">(null);
+  const [reordering, setReordering] = useState(false);
 
   useEffect(() => {
     restore();
@@ -199,6 +203,8 @@ export default function HomePage() {
   const go = useCallback((next: Route) => {
     window.history.pushState(null, "", routeHref(next));
     routeTransition(() => {
+      setSelected(null);
+      setReordering(false);
       setRoute(next);
       setOpenId(null);
       setConfirmDelete(false);
@@ -261,6 +267,25 @@ export default function HomePage() {
     toggleCollection: (itemId, collectionId, on) => friendly(toggleCollection(itemId, collectionId, on)),
     newCollection: (itemId) => setDialog({ kind: "new", itemId }),
   };
+
+  const toggleSelect = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev ?? []);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const runBulk = (op: Parameters<typeof bulkItems>[1]) => {
+    const ids = [...(selected ?? [])];
+    setSelected(null);
+    setBulkDialog(null);
+    if (ids.length > 0) bulkItems(ids, op).catch((e: unknown) => setNotice(messageOf(e)));
+  };
+  const selectButton = (
+    <button type="button" aria-pressed={selected !== null} onClick={() => setSelected(selected ? null : new Set())} className="min-h-11 shrink-0 cursor-pointer rounded-full border border-line bg-white/50 px-4 text-sm backdrop-blur">
+      {selected ? "選択をやめる" : "選択"}
+    </button>
+  );
 
   const homeRoute: HomeRoute = route.view === "home" ? route : HOME;
   const setHome = (patch: Partial<Omit<HomeRoute, "view">>) => go({ ...homeRoute, ...patch });
@@ -375,7 +400,8 @@ export default function HomePage() {
                     </button>
                   );
                 })}
-                <label className="ml-auto flex min-h-11 shrink-0 items-center gap-2 rounded-full border border-line bg-white/50 px-4 text-sm backdrop-blur">
+                <span className="ml-auto shrink-0">{selectButton}</span>
+                <label className="flex min-h-11 shrink-0 items-center gap-2 rounded-full border border-line bg-white/50 px-4 text-sm backdrop-blur">
                   <span className="sr-only">並び順</span>
                   <select value={route.sort} onChange={(e) => setHome({ sort: e.target.value as Sort })} className="cursor-pointer bg-transparent outline-none">
                     <option value="new">新しい順</option>
@@ -397,6 +423,12 @@ export default function HomePage() {
                   <h1 className="font-display text-5xl font-light leading-none tracking-tight sm:text-7xl [overflow-wrap:anywhere]">{currentCollection.row.name}</h1>
                   <div className="flex flex-wrap items-center gap-2.5">
                     <span className="text-[13px] text-ink-secondary">{currentCollection.itemIds.length} items</span>
+                    {!reordering && currentCollection.itemIds.length > 0 && selectButton}
+                    {!reordering && currentCollection.itemIds.length > 1 && (
+                      <button type="button" onClick={() => { setSelected(null); setReordering(true); }} className="min-h-11 cursor-pointer rounded-[22px] border border-line px-4 text-sm">
+                        並べ替え
+                      </button>
+                    )}
                     <button type="button" onClick={() => setDialog({ kind: "rename", id: currentCollection.row.id ?? "", name: currentCollection.row.name ?? "" })} className="min-h-11 cursor-pointer rounded-[22px] border border-line px-4 text-sm">
                       名前を変更
                     </button>
@@ -426,10 +458,28 @@ export default function HomePage() {
             )
           )}
 
-          {showGrid && (items.length > 0 ? (
+          {reordering && currentCollection && (
+            <ReorderList
+              items={items}
+              onCancel={() => setReordering(false)}
+              onSave={(ids) => {
+                setReordering(false);
+                reorderCollection(currentCollection.row.id ?? "", ids).catch((e: unknown) => setNotice(messageOf(e)));
+              }}
+            />
+          )}
+
+          {showGrid && !reordering && (items.length > 0 ? (
             <div className="mt-9 columns-2 gap-4 sm:gap-6 md:columns-3 xl:columns-4 2xl:columns-5">
               {items.map((item, i) => (
-                <Card key={item.id} index={i} item={item} tags={tagsByItem.get(item.id ?? "") ?? []} onOpen={() => openItem(item.id ?? "")} />
+                <Card
+                  key={item.id}
+                  index={i}
+                  item={item}
+                  tags={tagsByItem.get(item.id ?? "") ?? []}
+                  selected={selected ? selected.has(item.id ?? "") : undefined}
+                  onOpen={() => (selected ? toggleSelect(item.id ?? "") : openItem(item.id ?? ""))}
+                />
               ))}
             </div>
           ) : (
@@ -483,6 +533,43 @@ export default function HomePage() {
             const id = createCollection(name, itemId);
             if (!itemId) go({ view: "collection", id });
           }}
+        />
+      )}
+      {selected && showGrid && (
+        <BulkBar
+          count={selected.size}
+          inCollection={route.view === "collection"}
+          onTags={() => setBulkDialog("tags")}
+          onCollection={() => setBulkDialog("collection")}
+          onRemoveFromCollection={() => runBulk({ removeFromCollection: route.view === "collection" ? route.id : "" })}
+          onDelete={() => runBulk({ delete: true })}
+          onCancel={() => setSelected(null)}
+        />
+      )}
+      {bulkDialog === "tags" && (
+        <NameDialog
+          title="タグを追加"
+          label="追加するタグ（カンマ区切りで複数可）"
+          submit="追加"
+          onClose={() => setBulkDialog(null)}
+          onSubmit={(text) => runBulk({ addTags: text.split(/[,、，]/).map((t) => t.trim()).filter(Boolean) })}
+        />
+      )}
+      {bulkDialog === "collection" && (
+        <CollectionPicker
+          collections={collections.map((c) => c.row)}
+          onClose={() => setBulkDialog(null)}
+          onPick={(id) => runBulk({ addToCollection: id })}
+          onNew={() => setBulkDialog("newCollection")}
+        />
+      )}
+      {bulkDialog === "newCollection" && (
+        <NameDialog
+          title="新しいコレクション"
+          label="コレクションの名前"
+          submit="作成して追加"
+          onClose={() => setBulkDialog(null)}
+          onSubmit={(name) => runBulk({ addToCollection: createCollection(name) })}
         />
       )}
       {tagDialog && (

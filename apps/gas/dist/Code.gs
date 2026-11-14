@@ -44,7 +44,7 @@ var META_SHEET = "_meta";
 var CURATION_SHEET = "curation";
 var CURATION_COLUMNS = [
   "item_id", "title", "url", "domain", "content_type", "excerpt", "saved_at",
-  "tags", "new_tags", "summary", "note", "apply"
+  "tags", "new_tags", "summary", "note", "apply", "collections", "new_collections"
 ];
 var SCHEMA_VERSION = 1;
 
@@ -296,6 +296,7 @@ function handle_(db, user, action, params) {
     case "items.restore": return itemsRestore_(db, user, p);
     case "items.refetch": return itemsRefetch_(db, user, p);
     case "items.setTags": return itemsSetTags_(db, user, p);
+    case "items.bulk": return itemsBulk_(db, user, p);
     case "tags.update": return tagsUpdate_(db, user, p);
     case "tags.delete": return tagsDelete_(db, user, p);
     case "tags.merge": return tagsMerge_(db, user, p);
@@ -471,6 +472,56 @@ function itemsSetTags_(db, user, p) {
   var tags = db.live("tags", user.id).filter(function (t) { return keys[tagKey_(t.name)]; });
   var links = db.table("item_tags").rows.filter(function (l) { return l.item_id === String(p.id) && l.user_id === user.id; });
   return { item_id: p.id, tags: names, rows: { tags: tags.map(publicRow_), item_tags: links.map(publicRow_) } };
+}
+
+function itemTagNames_(db, user, itemId) {
+  var names = {};
+  db.live("tags", user.id).forEach(function (t) { names[t.id] = t.name; });
+  return db.live("item_tags", user.id)
+    .filter(function (l) { return l.item_id === itemId && names[l.tag_id]; })
+    .map(function (l) { return names[l.tag_id]; });
+}
+
+/** 複数のアイテムへの一括操作。タグの追加、コレクションへの追加・除外、削除。 */
+function itemsBulk_(db, user, p) {
+  var ids = (p.ids || []).map(String);
+  if (ids.length === 0) throw err_("INVALID", "アイテムが選択されていません。");
+  if (ids.length > 500) throw err_("INVALID", "一度に操作できるのは500件までです。");
+  var items = ids.map(function (id) { return ownLive_(db, user, "items", id); });
+  var addTags = (p.add_tags || []).map(cleanTagName_).filter(function (t) { return t !== ""; });
+  if (addTags.length > 0) {
+    items.forEach(function (item) {
+      setItemTags_(db, user, item.id, itemTagNames_(db, user, item.id).concat(addTags));
+    });
+  }
+  if (p.add_to_collection) collectionsAddItems_(db, user, { collection_id: p.add_to_collection, item_ids: ids });
+  if (p.remove_from_collection) collectionsRemoveItems_(db, user, { collection_id: p.remove_from_collection, item_ids: ids });
+  if (p.delete === true) {
+    var now = now_();
+    items.forEach(function (item) { db.update("items", item, { deleted_at: now }); });
+  }
+  return { count: items.length };
+}
+
+/** アイテムの所属コレクションを names の集合に置き換える。なければ作る。 */
+function setItemCollections_(db, user, itemId, names) {
+  var item = ownLive_(db, user, "items", itemId);
+  var wanted = {};
+  names.forEach(function (n) {
+    var name = cleanTagName_(n);
+    if (name === "") return;
+    var key = name.toLowerCase();
+    var found = db.live("collections", user.id).filter(function (c) { return c.name.toLowerCase() === key; })[0];
+    if (!found) found = own_(db, user, "collections", collectionsCreate_(db, user, { name: name }).collection.id);
+    wanted[found.id] = true;
+  });
+  var now = now_();
+  db.live("collection_items", user.id).forEach(function (l) {
+    if (l.item_id === item.id && !wanted[l.collection_id]) db.update("collection_items", l, { deleted_at: now });
+  });
+  Object.keys(wanted).forEach(function (cid) {
+    collectionsAddItems_(db, user, { collection_id: cid, item_ids: [item.id] });
+  });
 }
 
 function tagsUpdate_(db, user, p) {
@@ -748,6 +799,17 @@ function verifyIdToken_(idToken) {
 }
 
 // ===== 07_curation.js =====
+/** 整理シートの見出し行を読み、列名 → 列番号（0始まり）を返す。列の並び順には依存しない。 */
+function curationHeader_(sheet) {
+  var header = sheet.getRange(1, 1, 1, Math.max(1, sheet.getLastColumn())).getValues()[0].map(String);
+  var col = {};
+  CURATION_COLUMNS.forEach(function (c) {
+    col[c] = header.indexOf(c);
+    if (col[c] === -1) throw err_("SCHEMA", "整理シートに列 " + c + " がありません。初期セットアップを実行してください。");
+  });
+  return { header: header, col: col };
+}
+
 /** 整理シートを現在のデータで作り直す。編集欄には現在の値を入れておく。 */
 function curationRefresh_(db, user) {
   var tagName = {};
@@ -756,21 +818,39 @@ function curationRefresh_(db, user) {
   db.live("item_tags", user.id).forEach(function (l) {
     if (tagName[l.tag_id]) (tagsOf[l.item_id] = tagsOf[l.item_id] || []).push(tagName[l.tag_id]);
   });
+  var colName = {};
+  db.live("collections", user.id).forEach(function (c) { colName[c.id] = c.name; });
+  var colsOf = {};
+  db.live("collection_items", user.id).forEach(function (l) {
+    if (colName[l.collection_id]) (colsOf[l.item_id] = colsOf[l.item_id] || []).push(colName[l.collection_id]);
+  });
+
+  var sheet = db.sheet_(CURATION_SHEET);
+  var h = curationHeader_(sheet);
+  var width = h.header.length;
   var items = db.live("items", user.id).sort(function (a, b) { return a.created_at < b.created_at ? 1 : -1; });
   var rows = items.map(function (it) {
     var tags = (tagsOf[it.id] || []).sort().join(", ");
-    return [it.id, it.title, it.original_url, it.domain, it.content_type, it.excerpt, it.created_at,
-      tags, tags, it.summary, it.user_note, false].map(function (v) { return typeof v === "boolean" ? v : toCell_(v); });
+    var cols = (colsOf[it.id] || []).sort().join(", ");
+    var values = {
+      item_id: it.id, title: it.title, url: it.original_url, domain: it.domain, content_type: it.content_type,
+      excerpt: it.excerpt, saved_at: it.created_at, tags: tags, new_tags: tags, summary: it.summary,
+      note: it.user_note, collections: cols, new_collections: cols
+    };
+    return h.header.map(function (name, j) {
+      if (j === h.col.apply) return false;
+      return values[name] === undefined ? "" : toCell_(values[name]);
+    });
   });
-  var sheet = db.sheet_(CURATION_SHEET);
-  var width = CURATION_COLUMNS.length;
   if (sheet.getLastRow() > 1) sheet.getRange(2, 1, sheet.getLastRow() - 1, width).clearContent();
   if (rows.length > 0) {
     var need = rows.length + 1 - sheet.getMaxRows();
     if (need > 0) sheet.insertRowsAfter(sheet.getMaxRows(), need);
-    sheet.getRange(2, 1, rows.length, width - 1).setNumberFormat("@");
+    sheet.getRange(2, 1, rows.length, width).setNumberFormat("@");
+    var applyRange = sheet.getRange(2, h.col.apply + 1, rows.length, 1);
+    applyRange.setNumberFormat("General");
     sheet.getRange(2, 1, rows.length, width).setValues(rows);
-    sheet.getRange(2, width, rows.length, 1).insertCheckboxes();
+    applyRange.insertCheckboxes();
   }
   return { count: rows.length };
 }
@@ -786,40 +866,42 @@ function splitTags_(text) {
   return out;
 }
 
+function sameNames_(a, b) {
+  return a.length === b.length && a.map(tagKey_).sort().join("\n") === b.map(tagKey_).sort().join("\n");
+}
+
 /** apply にチェックがある行の変更内容を調べる。dryRun なら書き込まない。 */
 function curationApply_(db, user, dryRun) {
   var sheet = db.sheet_(CURATION_SHEET);
+  var col = curationHeader_(sheet).col;
   var values = sheet.getDataRange().getValues();
-  var header = (values[0] || []).map(String);
-  var col = {};
-  CURATION_COLUMNS.forEach(function (c) {
-    col[c] = header.indexOf(c);
-    if (col[c] === -1) throw err_("SCHEMA", "整理シートに列 " + c + " がありません。");
-  });
-  var result = { rows: 0, tagChanges: 0, summaryChanges: 0, noteChanges: 0, skipped: [], appliedRows: [] };
+  var result = { rows: 0, tagChanges: 0, collectionChanges: 0, summaryChanges: 0, noteChanges: 0, skipped: [], appliedRows: [], applyColumn: col.apply + 1 };
   for (var i = 1; i < values.length; i++) {
     var v = values[i];
     if (v[col.apply] !== true && String(v[col.apply]).toUpperCase() !== "TRUE") continue;
-    var id = String(v[col.item_id] || "");
     var item;
     try {
-      item = ownLive_(db, user, "items", id);
+      item = ownLive_(db, user, "items", String(v[col.item_id] || ""));
     } catch (e) {
       result.skipped.push({ row: i + 1, reason: "アイテムが見つかりません" });
       continue;
     }
     try {
-      var wanted = splitTags_(v[col.new_tags]);
-      var current = splitTags_(v[col.tags]);
-      var same = wanted.length === current.length && wanted.map(tagKey_).sort().join("\n") === current.map(tagKey_).sort().join("\n");
+      var wantedTags = splitTags_(v[col.new_tags]);
+      var tagsSame = sameNames_(wantedTags, splitTags_(v[col.tags]));
+      var wantedCols = splitTags_(v[col.new_collections]);
+      var colsSame = sameNames_(wantedCols, splitTags_(v[col.collections]));
       var summary = str_(v[col.summary], LIMITS.summary, "要約");
       var note = str_(v[col.note], LIMITS.note, "メモ");
+      wantedCols.forEach(function (n) { str_(n, LIMITS.name, "コレクション名"); });
       var patch = {};
       if (summary !== item.summary) { patch.summary = summary; result.summaryChanges++; }
       if (note !== item.user_note) { patch.user_note = note; result.noteChanges++; }
-      if (!same) result.tagChanges++;
+      if (!tagsSame) result.tagChanges++;
+      if (!colsSame) result.collectionChanges++;
       if (!dryRun) {
-        if (!same) setItemTags_(db, user, item.id, wanted);
+        if (!tagsSame) setItemTags_(db, user, item.id, wantedTags);
+        if (!colsSame) setItemCollections_(db, user, item.id, wantedCols);
         if (patch.summary !== undefined || patch.user_note !== undefined) {
           patch.updated_at = now_();
           db.update("items", item, patch);
@@ -940,6 +1022,7 @@ function menuCurationRefresh() {
   var ui = SpreadsheetApp.getUi();
   var answer = ui.alert("整理シートを更新", "整理シートの内容を現在のデータで作り直します。未反映の編集は失われます。", ui.ButtonSet.OK_CANCEL);
   if (answer !== ui.Button.OK) return;
+  ensureSheet_(SpreadsheetApp.getActiveSpreadsheet(), CURATION_SHEET, CURATION_COLUMNS, false);
   var result = curationRefresh_(database_(), menuUser_());
   ui.alert(result.count + " 件を書き出しました。");
 }
@@ -952,7 +1035,7 @@ function menuCurationApply() {
     ui.alert("反映する行がありません。apply 列にチェックを入れてください。");
     return;
   }
-  var message = "対象 " + preview.rows + " 行\nタグの変更 " + preview.tagChanges + " 件\n要約の変更 " + preview.summaryChanges + " 件\nメモの変更 " + preview.noteChanges + " 件"
+  var message = "対象 " + preview.rows + " 行\nタグの変更 " + preview.tagChanges + " 件\nコレクションの変更 " + preview.collectionChanges + " 件\n要約の変更 " + preview.summaryChanges + " 件\nメモの変更 " + preview.noteChanges + " 件"
     + (preview.skipped.length > 0 ? "\nスキップ " + preview.skipped.length + " 行" : "") + "\n\n反映しますか？";
   if (ui.alert("整理を反映", message, ui.ButtonSet.OK_CANCEL) !== ui.Button.OK) return;
 
@@ -964,7 +1047,7 @@ function menuCurationApply() {
     result = curationApply_(db, user, false);
     db.flush();
     var sheet = db.sheet_(CURATION_SHEET);
-    result.appliedRows.forEach(function (r) { sheet.getRange(r, CURATION_COLUMNS.length, 1, 1).setValues([[false]]); });
+    result.appliedRows.forEach(function (r) { sheet.getRange(r, result.applyColumn, 1, 1).setValues([[false]]); });
   } finally {
     lock.releaseLock();
   }

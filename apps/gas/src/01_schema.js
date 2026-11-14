@@ -40,7 +40,7 @@ var META_SHEET = "_meta";
 var CURATION_SHEET = "curation";
 var CURATION_COLUMNS = [
   "item_id", "title", "url", "domain", "content_type", "excerpt", "saved_at",
-  "tags", "new_tags", "summary", "note", "apply"
+  "tags", "new_tags", "summary", "note", "apply", "collections", "new_collections"
 ];
 var SCHEMA_VERSION = 1;
 

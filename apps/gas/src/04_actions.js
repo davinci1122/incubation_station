@@ -15,6 +15,7 @@ function handle_(db, user, action, params) {
     case "items.restore": return itemsRestore_(db, user, p);
     case "items.refetch": return itemsRefetch_(db, user, p);
     case "items.setTags": return itemsSetTags_(db, user, p);
+    case "items.bulk": return itemsBulk_(db, user, p);
     case "tags.update": return tagsUpdate_(db, user, p);
     case "tags.delete": return tagsDelete_(db, user, p);
     case "tags.merge": return tagsMerge_(db, user, p);
@@ -190,6 +191,56 @@ function itemsSetTags_(db, user, p) {
   var tags = db.live("tags", user.id).filter(function (t) { return keys[tagKey_(t.name)]; });
   var links = db.table("item_tags").rows.filter(function (l) { return l.item_id === String(p.id) && l.user_id === user.id; });
   return { item_id: p.id, tags: names, rows: { tags: tags.map(publicRow_), item_tags: links.map(publicRow_) } };
+}
+
+function itemTagNames_(db, user, itemId) {
+  var names = {};
+  db.live("tags", user.id).forEach(function (t) { names[t.id] = t.name; });
+  return db.live("item_tags", user.id)
+    .filter(function (l) { return l.item_id === itemId && names[l.tag_id]; })
+    .map(function (l) { return names[l.tag_id]; });
+}
+
+/** 複数のアイテムへの一括操作。タグの追加、コレクションへの追加・除外、削除。 */
+function itemsBulk_(db, user, p) {
+  var ids = (p.ids || []).map(String);
+  if (ids.length === 0) throw err_("INVALID", "アイテムが選択されていません。");
+  if (ids.length > 500) throw err_("INVALID", "一度に操作できるのは500件までです。");
+  var items = ids.map(function (id) { return ownLive_(db, user, "items", id); });
+  var addTags = (p.add_tags || []).map(cleanTagName_).filter(function (t) { return t !== ""; });
+  if (addTags.length > 0) {
+    items.forEach(function (item) {
+      setItemTags_(db, user, item.id, itemTagNames_(db, user, item.id).concat(addTags));
+    });
+  }
+  if (p.add_to_collection) collectionsAddItems_(db, user, { collection_id: p.add_to_collection, item_ids: ids });
+  if (p.remove_from_collection) collectionsRemoveItems_(db, user, { collection_id: p.remove_from_collection, item_ids: ids });
+  if (p.delete === true) {
+    var now = now_();
+    items.forEach(function (item) { db.update("items", item, { deleted_at: now }); });
+  }
+  return { count: items.length };
+}
+
+/** アイテムの所属コレクションを names の集合に置き換える。なければ作る。 */
+function setItemCollections_(db, user, itemId, names) {
+  var item = ownLive_(db, user, "items", itemId);
+  var wanted = {};
+  names.forEach(function (n) {
+    var name = cleanTagName_(n);
+    if (name === "") return;
+    var key = name.toLowerCase();
+    var found = db.live("collections", user.id).filter(function (c) { return c.name.toLowerCase() === key; })[0];
+    if (!found) found = own_(db, user, "collections", collectionsCreate_(db, user, { name: name }).collection.id);
+    wanted[found.id] = true;
+  });
+  var now = now_();
+  db.live("collection_items", user.id).forEach(function (l) {
+    if (l.item_id === item.id && !wanted[l.collection_id]) db.update("collection_items", l, { deleted_at: now });
+  });
+  Object.keys(wanted).forEach(function (cid) {
+    collectionsAddItems_(db, user, { collection_id: cid, item_ids: [item.id] });
+  });
 }
 
 function tagsUpdate_(db, user, p) {

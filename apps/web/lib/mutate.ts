@@ -239,3 +239,50 @@ export function restoreItem(id: string): Promise<void> {
     }
   });
 }
+
+// ---------- 一括操作・並べ替え ----------
+
+export type BulkOp = { addTags?: string[]; addToCollection?: string; removeFromCollection?: string; delete?: boolean };
+
+export function bulkItems(ids: string[], op: BulkOp): Promise<void> {
+  const now = new Date().toISOString();
+  if (op.delete) {
+    upsert({ items: ids.flatMap((id) => { const r = getRow("items", id); return r ? [{ ...r, deleted_at: now }] : []; }) });
+  }
+  const link = (collectionId: string, itemId: string, on: boolean, i: number): Row => {
+    const existing = getRow("collection_items", `${collectionId}|${itemId}`);
+    return {
+      collection_id: collectionId, item_id: itemId, sort_order: existing?.sort_order ?? String(Date.now() + i),
+      added_at: existing?.added_at ?? now, version: existing?.version ?? "1", deleted_at: on ? "" : now,
+    };
+  };
+  if (op.addToCollection) upsert({ collection_items: ids.map((id, i) => link(op.addToCollection ?? "", id, true, i)) });
+  if (op.removeFromCollection) upsert({ collection_items: ids.map((id, i) => link(op.removeFromCollection ?? "", id, false, i)) });
+  return enqueue(async () => {
+    try {
+      await call("items.bulk", {
+        ids, add_tags: op.addTags ?? [], add_to_collection: op.addToCollection ?? "",
+        remove_from_collection: op.removeFromCollection ?? "", delete: op.delete === true,
+      });
+    } finally {
+      await sync().catch(() => undefined);
+    }
+  });
+}
+
+/** コレクション内の並び順を保存する。 */
+export function reorderCollection(collectionId: string, itemIds: string[]): Promise<void> {
+  upsert({
+    collection_items: itemIds.flatMap((id, i) => {
+      const r = getRow("collection_items", `${collectionId}|${id}`);
+      return r ? [{ ...r, sort_order: String(i + 1) }] : [];
+    }),
+  });
+  return enqueue(async () => {
+    try {
+      await call("collections.reorder", { collection_id: collectionId, item_ids: itemIds });
+    } finally {
+      await sync().catch(() => undefined);
+    }
+  });
+}
