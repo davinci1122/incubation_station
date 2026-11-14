@@ -10,6 +10,8 @@ function setupDatabase_(ss) {
   var db = new Db_(ss);
   if (db.getMeta("schema_version") === "") db.setMeta("schema_version", String(SCHEMA_VERSION));
   if (db.getMeta("rev_counter") === "") db.setMeta("rev_counter", "0");
+  // AIでの整理の設定。値は _meta シートで変更できる（料金改定時はここを直す）。
+  for (var key in AI_DEFAULTS) if (db.getMeta(key) === "") db.setMeta(key, AI_DEFAULTS[key]);
 
   // 新規スプレッドシートに最初からある空のシートを片付ける。
   ss.getSheets().forEach(function (sheet) {

@@ -8,14 +8,18 @@ import { Card } from "@/components/Card";
 import { CollectionsView, TagsView, type CollectionSummary } from "@/components/Collections";
 import { ItemPanel, type ItemActions } from "@/components/ItemPanel";
 import { Login } from "@/components/Login";
+import { ConflictDialog } from "@/components/ConflictDialog";
 import { NameDialog } from "@/components/NameDialog";
 import { SettingsView } from "@/components/Settings";
 import { Orbs } from "@/components/Orbs";
 import { ApiError } from "@/lib/api";
 import { getToken, signOut, subscribeToken } from "@/lib/google";
 import { exportBookmarks, exportCsv, exportJson } from "@/lib/export";
-import { bulkItems, createCollection, createItem, deleteCollection, deleteItem, deleteTag, refetchItem, renameTag, reorderCollection, restoreItem, setItemTags, toggleCollection, updateCollection, updateItem } from "@/lib/mutate";
-import { closeTransition, openTransition, routeTransition } from "@/lib/transition";
+import {
+  bulkItems, createCollection, createItem, deleteCollection, deleteItem, deleteTag, flush, getOutboxState, refetchItem, renameTag, reorderCollection,
+  resolveConflict, restoreItem, setItemTags, startOutbox, subscribeEvents, subscribeOutbox, toggleCollection, updateCollection, updateItem, type OutboxState,
+} from "@/lib/mutate";
+import { openTransition, routeTransition } from "@/lib/transition";
 import { HOME, readRoute, routeHref, type HomeRoute, type Route, type Sort } from "@/lib/route";
 import { clearLocal, getSnapshot, restore, subscribe, sync, type Row, type Snapshot } from "@/lib/store";
 
@@ -24,6 +28,8 @@ const EMPTY: Snapshot = {
   tables: { items: [], captures: [], tags: [], item_tags: [], collections: [], collection_items: [], capture_jobs: [] },
 };
 
+const IDLE: OutboxState = { pending: 0, conflicts: [], offline: false };
+
 function messageOf(e: unknown): string {
   return e instanceof Error ? e.message : "エラーが発生しました。";
 }
@@ -31,14 +37,18 @@ function messageOf(e: unknown): string {
 export default function HomePage() {
   const token = useSyncExternalStore(subscribeToken, getToken, () => null);
   const data = useSyncExternalStore(subscribe, getSnapshot, () => EMPTY);
+  const outbox = useSyncExternalStore(subscribeOutbox, getOutboxState, () => IDLE);
+  const [closingId, setClosingId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
   const openRef = useRef<string | null>(null);
   openRef.current = openId;
+  const routeRef = useRef<Route>(HOME);
   const [notice, setNotice] = useState("");
   const [route, setRoute] = useState<Route>(HOME);
+  routeRef.current = route;
   const [dialog, setDialog] = useState<null | { kind: "new"; itemId?: string } | { kind: "rename"; id: string; name: string }>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [tagEditing, setTagEditing] = useState(false);
@@ -50,6 +60,7 @@ export default function HomePage() {
 
   useEffect(() => {
     restore();
+    startOutbox();
   }, []);
 
   const refresh = useCallback(async () => {
@@ -61,15 +72,22 @@ export default function HomePage() {
         clearLocal();
         await signOut();
         setNotice("このアカウントでは利用できません。");
-      } else if (!(e instanceof ApiError && e.code === "UNAUTHENTICATED")) {
+      } else if (!(e instanceof ApiError && (e.code === "UNAUTHENTICATED" || (e.code === "NETWORK" && !navigator.onLine)))) {
         setNotice(messageOf(e));
       }
     }
   }, []);
 
   useEffect(() => {
-    if (token) void refresh();
+    if (token) void flush().then(refresh);
   }, [token, refresh]);
+
+  // 通信が戻ったら、他の端末の変更も取り込む。
+  useEffect(() => {
+    const onOnline = () => { if (getToken()) void refresh(); };
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+  }, [refresh]);
 
   const tagsByItem = useMemo(() => {
     const names = new Map<string, string>();
@@ -163,9 +181,12 @@ export default function HomePage() {
 
   const total = liveItems.length;
   const open = openId ? data.tables.items.find((i) => i.id === openId && i.deleted_at === "") : undefined;
+  const closingItem = closingId ? data.tables.items.find((i) => i.id === closingId) : undefined;
+  const shown = open ?? closingItem;
 
   // 詳細パネルの開閉をブラウザの履歴に載せ、「戻る」で閉じられるようにする。
   useEffect(() => {
+    const sameView = () => JSON.stringify(readRoute()) === JSON.stringify(routeRef.current);
     const apply = () => {
       const m = /^#item=([0-9a-f-]{36})$/.exec(window.location.hash);
       setOpenId(m ? (m[1] ?? null) : null);
@@ -176,8 +197,12 @@ export default function HomePage() {
       const m = /^#item=([0-9a-f-]{36})$/.exec(window.location.hash);
       const nextId = m ? (m[1] ?? null) : null;
       const prevId = openRef.current;
-      if (prevId && !nextId) closeTransition(apply);
-      else if (nextId && !prevId) openTransition(nextId, apply);
+      if (prevId && !nextId && sameView()) {
+        // 閉じるときはパネル自体を右へ送り出してから外す（すりガラスの枠だけが残らないように）。
+        setClosingId(prevId);
+        apply();
+        window.setTimeout(() => setClosingId((c) => (c === prevId ? null : c)), 210);
+      } else if (nextId && !prevId) openTransition(nextId, apply);
       else routeTransition(apply);
     };
     window.addEventListener("popstate", read);
@@ -197,7 +222,7 @@ export default function HomePage() {
 
   const closeItem = useCallback(() => {
     if (window.location.hash.startsWith("#item=")) window.history.back();
-    else if (openRef.current) closeTransition(() => setOpenId(null));
+    else setOpenId(null);
   }, []);
 
   const go = useCallback((next: Route) => {
@@ -221,16 +246,21 @@ export default function HomePage() {
     setAdding(false);
     setAddError("");
     setNotice("");
-    const { done } = createItem(input, normalized, displayDomain(normalized) ?? "");
-    done
-      .then((r) => {
-        if (r.duplicateOf !== null) {
-          setNotice("このURLは保存済みです。");
-          openItem(r.duplicateOf);
-        }
-      })
-      .catch((e: unknown) => setNotice(`保存できませんでした。${messageOf(e)}`));
+    createItem(input, normalized, displayDomain(normalized) ?? "");
   };
+
+  useEffect(
+    () =>
+      subscribeEvents((e) => {
+        if (e.type === "error") setNotice(e.message);
+        if (e.type === "merged") setNotice(`同じ名前のタグがあったため、「${e.name}」に統合しました。`);
+        if (e.type === "duplicate") {
+          setNotice("このURLは保存済みです。");
+          openItem(e.id);
+        }
+      }),
+    [openItem],
+  );
 
   // 共有メニュー・ブックマークレット・ショートカットから渡されたURLを保存する（?add= / ?url= / ?text=）。
   useEffect(() => {
@@ -253,18 +283,12 @@ export default function HomePage() {
     }
   }, []);
 
-  const friendly = (p: Promise<void>) =>
-    p.catch((e: unknown) => {
-      if (e instanceof ApiError && e.code === "CONFLICT") throw new Error("他の端末で更新されていたため、最新の内容を読み込みました。もう一度編集してください。");
-      throw e;
-    });
-
   const actions: ItemActions = {
-    update: (id, patch) => friendly(updateItem(id, patch)),
-    setTags: (id, tags) => friendly(setItemTags(id, tags)),
-    refetch: (id) => friendly(refetchItem(id)),
-    remove: (id) => friendly(deleteItem(id)),
-    toggleCollection: (itemId, collectionId, on) => friendly(toggleCollection(itemId, collectionId, on)),
+    update: (id, patch) => updateItem(id, patch),
+    setTags: (id, tags) => setItemTags(id, tags),
+    refetch: (id) => refetchItem(id),
+    remove: (id) => deleteItem(id),
+    toggleCollection: (itemId, collectionId, on) => toggleCollection(itemId, collectionId, on),
     newCollection: (itemId) => setDialog({ kind: "new", itemId }),
   };
 
@@ -279,7 +303,7 @@ export default function HomePage() {
     const ids = [...(selected ?? [])];
     setSelected(null);
     setBulkDialog(null);
-    if (ids.length > 0) bulkItems(ids, op).catch((e: unknown) => setNotice(messageOf(e)));
+    if (ids.length > 0) bulkItems(ids, op);
   };
   const selectButton = (
     <button type="button" aria-pressed={selected !== null} onClick={() => setSelected(selected ? null : new Set())} className="min-h-11 shrink-0 cursor-pointer rounded-full border border-line bg-white/50 px-4 text-sm backdrop-blur">
@@ -366,7 +390,7 @@ export default function HomePage() {
             <SettingsView
               appUrl={typeof window === "undefined" ? "" : `${window.location.origin}${window.location.pathname}`}
               trash={data.tables.items.filter((i) => i.deleted_at !== "" && i.url_hash).sort((a, b) => ((a.deleted_at ?? "") < (b.deleted_at ?? "") ? 1 : -1)).slice(0, 50)}
-              onRestore={(id) => restoreItem(id).catch((e: unknown) => setNotice(messageOf(e)))}
+              onRestore={restoreItem}
               onExport={(kind) => {
                 const tagsOf = (id: string) => tagsByItem.get(id) ?? [];
                 const names = new Map(collections.map((c) => [c.row.id ?? "", c.row.name ?? ""]));
@@ -386,6 +410,8 @@ export default function HomePage() {
                   {query.trim() !== "" ? "Search" : route.tag !== "" ? `# ${route.tag}` : route.fav ? "Favorites" : "Recently saved"}
                 </h1>
                 <p className="text-[13px] text-ink-secondary" role="status">
+                  {outbox.offline ? "オフライン · " : ""}
+                  {outbox.pending > 0 ? `未送信 ${outbox.pending} 件 · ` : ""}
                   {data.syncing ? "同期中…" : `${items.length} / ${total} items`}
                 </p>
               </div>
@@ -439,7 +465,7 @@ export default function HomePage() {
                           onClick={() => {
                             const id = currentCollection.row.id ?? "";
                             go({ view: "collections" });
-                            deleteCollection(id).catch((e: unknown) => setNotice(messageOf(e)));
+                            deleteCollection(id);
                           }}
                           className="min-h-11 cursor-pointer rounded-[22px] bg-danger px-4 text-sm text-white"
                         >
@@ -464,7 +490,7 @@ export default function HomePage() {
               onCancel={() => setReordering(false)}
               onSave={(ids) => {
                 setReordering(false);
-                reorderCollection(currentCollection.row.id ?? "", ids).catch((e: unknown) => setNotice(messageOf(e)));
+                reorderCollection(currentCollection.row.id ?? "", ids);
               }}
             />
           )}
@@ -510,15 +536,32 @@ export default function HomePage() {
         ))}
       </nav>
 
-      {open && <button type="button" aria-label="詳細を閉じる" onClick={closeItem} className="fixed inset-0 z-[15] cursor-default bg-ink/5" style={{ transform: "none" }} />}
-      {open && (
+      {shown && (
+        <button
+          type="button"
+          aria-label="詳細を閉じる"
+          tabIndex={-1}
+          onClick={closeItem}
+          className={`fixed inset-0 z-[15] cursor-default bg-ink/5 ${open ? "anim-fade" : "backdrop-closing"}`}
+          style={{ transform: "none" }}
+        />
+      )}
+      {shown && (
         <ItemPanel
-          item={open}
-          tags={tagsByItem.get(open.id ?? "") ?? []}
+          item={shown}
+          closing={!open}
+          tags={tagsByItem.get(shown.id ?? "") ?? []}
           collections={collections.map((c) => c.row)}
-          memberOf={memberOf.get(open.id ?? "") ?? new Set()}
+          memberOf={memberOf.get(shown.id ?? "") ?? new Set()}
           actions={actions}
           onClose={closeItem}
+        />
+      )}
+      {outbox.conflicts[0] && (
+        <ConflictDialog
+          conflict={outbox.conflicts[0]}
+          remaining={outbox.conflicts.length}
+          onResolve={(choice) => resolveConflict(outbox.conflicts[0]?.id ?? "", choice)}
         />
       )}
       {dialog?.kind === "new" && (
@@ -583,7 +626,7 @@ export default function HomePage() {
             onClick: () => {
               const id = tagDialog.id;
               setTagDialog(null);
-              deleteTag(id).catch((e: unknown) => setNotice(messageOf(e)));
+              deleteTag(id);
             },
           }}
           onClose={() => setTagDialog(null)}
@@ -591,9 +634,7 @@ export default function HomePage() {
             const { id, name: before } = tagDialog;
             setTagDialog(null);
             if (name === before) return;
-            renameTag(id, name)
-              .then((r) => setNotice(r.merged ? `「${before}」を「${name}」に統合しました。` : ""))
-              .catch((e: unknown) => setNotice(messageOf(e)));
+            renameTag(id, name);
           }}
         />
       )}
@@ -607,7 +648,7 @@ export default function HomePage() {
           onSubmit={(name) => {
             const id = dialog.id;
             setDialog(null);
-            updateCollection(id, { name }).catch((e: unknown) => setNotice(messageOf(e)));
+            updateCollection(id, { name });
           }}
         />
       )}

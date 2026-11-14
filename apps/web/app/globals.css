@@ -118,7 +118,13 @@ a[href]:active {
 /* View Transitions（画面の切り替え・詳細パネルの開閉） */
 .item-panel { view-transition-name: item-panel; }
 .vt-hero { view-transition-name: hero; }
-html[data-vt="close"] .vt-hero { view-transition-name: none; }
+.item-panel-closing {
+  animation: panel-out 200ms cubic-bezier(0.4, 0, 1, 1) both;
+  pointer-events: none;
+  view-transition-name: none;
+}
+.item-panel-closing .vt-hero { view-transition-name: none; }
+.backdrop-closing { animation: fade-out 200ms ease-in both; pointer-events: none; }
 
 ::view-transition-group(*) {
   animation-duration: 460ms;
@@ -128,8 +134,6 @@ html[data-vt="route"]::view-transition-old(root) { animation: view-out 200ms eas
 html[data-vt="route"]::view-transition-new(root) { animation: view-in 420ms var(--ease-out) 60ms both; }
 ::view-transition-new(item-panel) { animation: panel-in 460ms var(--ease-out) both; }
 ::view-transition-old(item-panel) { animation: panel-out 220ms cubic-bezier(0.4, 0, 1, 1) both; }
-html[data-vt="close"]::view-transition-old(root),
-html[data-vt="close"]::view-transition-new(root) { animation: none; }
 ::view-transition-old(hero),
 ::view-transition-new(hero) {
   height: 100%;

@@ -61,12 +61,16 @@ function cabinetMenu() {
     .addSeparator()
     .addItem("整理シートを更新", "menuCurationRefresh")
     .addItem("整理を反映", "menuCurationApply")
+    .addSeparator()
+    .addItem("AIで整理（見積もりを表示）", "menuAiCurate")
+    .addItem("今すぐバックアップ", "menuBackupNow")
     .addToUi();
 }
 
 function ensureMenuTrigger_() {
-  var exists = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === "cabinetMenu"; });
-  if (!exists) ScriptApp.newTrigger("cabinetMenu").forSpreadsheet(SpreadsheetApp.getActiveSpreadsheet()).onOpen().create();
+  var handlers = ScriptApp.getProjectTriggers().map(function (t) { return t.getHandlerFunction(); });
+  if (handlers.indexOf("cabinetMenu") === -1) ScriptApp.newTrigger("cabinetMenu").forSpreadsheet(SpreadsheetApp.getActiveSpreadsheet()).onOpen().create();
+  if (handlers.indexOf("dailyMaintenance") === -1) ScriptApp.newTrigger("dailyMaintenance").timeBased().everyDays(1).atHour(4).create();
 }
 
 function menuUser_() {
@@ -133,4 +137,48 @@ function menuCurationApply() {
     lock.releaseLock();
   }
   ui.alert(result.rows + " 行を反映しました。" + (result.skipped.length > 0 ? "\nスキップ: " + result.skipped.map(function (s) { return s.row + "行目（" + s.reason + "）"; }).join("、") : ""));
+}
+
+function yen_(value) {
+  return value < 1 ? (Math.round(value * 100) / 100) + " 円" : Math.round(value) + " 円";
+}
+
+function menuAiCurate() {
+  var ui = SpreadsheetApp.getUi();
+  var apiKey = String(props_().getProperty("AI_API_KEY") || "");
+  if (apiKey === "") {
+    ui.alert("AIで整理", "Gemini APIキーが未設定です。\nプロジェクトの設定 → スクリプト プロパティに AI_API_KEY を追加してください。", ui.ButtonSet.OK);
+    return;
+  }
+  var user = menuUser_();
+  ensureSheet_(SpreadsheetApp.getActiveSpreadsheet(), CURATION_SHEET, CURATION_COLUMNS, false);
+  var est = aiEstimate_(database_(), user);
+  if (est.count === 0) { ui.alert("整理が必要なアイテムはありません（すべてタグと要約が付いています）。"); return; }
+  var message = "対象: " + est.count + " 件（タグまたは要約がないもの）\nモデル: " + est.model
+    + "\n見積もり: 入力 約" + est.inputTokens + " / 出力 約" + est.outputTokens + " トークン"
+    + "\n予想費用: 最大 約" + yen_(est.costJpy) + "\n今月の累計: " + yen_(est.spentJpy) + " / 上限 " + yen_(est.limitJpy)
+    + "\n\n整理シートを作り直し、AIの提案を編集欄に書き込みます（未反映の編集は失われます）。\nデータへの反映は、確認後に「整理を反映」で行います。";
+  if (!est.withinLimit) { ui.alert("AIで整理", message + "\n\n今月の上限額を超えるため実行できません。_meta シートの ai_monthly_limit_jpy で上限を変更できます。", ui.ButtonSet.OK); return; }
+  if (ui.alert("AIで整理", message + "\n\n実行しますか？", ui.ButtonSet.OK_CANCEL) !== ui.Button.OK) return;
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) { ui.alert("混み合っています。少し待って再試行してください。"); return; }
+  var out;
+  try {
+    out = aiCurate_(database_(), user, apiKey, Date.now() + 270000);
+  } catch (e) {
+    ui.alert("AIで整理", e.message, ui.ButtonSet.OK);
+    return;
+  } finally {
+    lock.releaseLock();
+  }
+  ui.alert("AIで整理", out.done + " 件に提案を書き込みました。\n実際の費用: 約" + yen_(out.costJpy) + "（入力 " + out.inputTokens + " / 出力 " + out.outputTokens + " トークン）\n今月の累計: " + yen_(out.spentJpy)
+    + (out.stopped ? "\n\n" + out.stopped : "") + "\n\ncuration シートで内容を確認し、「整理を反映」を実行してください。", ui.ButtonSet.OK);
+}
+
+function menuBackupNow() {
+  var ui = SpreadsheetApp.getUi();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var result = backup_(ss, new Db_(ss), new Date());
+  ui.alert("バックアップしました（" + result.day + "）。Googleドライブに「InternetCabinet backup」で始まるファイルがあります。");
 }

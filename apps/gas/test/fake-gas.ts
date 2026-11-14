@@ -75,8 +75,21 @@ export class FakeSheet {
   setFrozenRows(n: number) { this.frozen = n; }
 }
 
+let nextId = 1;
+export const registry = new Map<string, FakeSpreadsheet>();
+
 export class FakeSpreadsheet {
+  id = `ss-${nextId++}`;
+  name = "";
   sheets: FakeSheet[] = [new FakeSheet("シート1")];
+  constructor() { registry.set(this.id, this); }
+  getId() { return this.id; }
+  copy(name: string) {
+    const c = new FakeSpreadsheet();
+    c.name = name;
+    c.sheets = this.sheets.map((s) => { const n = new FakeSheet(s.name); n.data = s.data.map((r) => [...r]); n.maxRows = s.maxRows; n.maxCols = s.maxCols; return n; });
+    return c;
+  }
   getSheetByName(name: string) { return this.sheets.find((s) => s.name === name) ?? null; }
   insertSheet(name: string) { const s = new FakeSheet(name); this.sheets.push(s); return s; }
   getSheets() { return [...this.sheets]; }
@@ -87,7 +100,7 @@ export type Env = {
   ctx: any; ss: FakeSpreadsheet; props: Map<string, string>; cache: Map<string, string>;
   tokens: Map<string, { code: number; body: unknown }>; fetchCount: { n: number }; activeEmail: { value: string };
   alerts: string[]; pages: Map<string, { code: number; headers?: Record<string, string>; body?: string; throws?: string }>;
-  triggers: string[]; menus: { n: number };
+  triggers: string[]; menus: { n: number }; ai: { handler: null | ((body: any) => { code: number; body: unknown }); calls: number };
 };
 
 export function createEnv(): Env {
@@ -101,6 +114,7 @@ export function createEnv(): Env {
   const pages: Env["pages"] = new Map();
   const triggers: string[] = [];
   const menus = { n: 0 };
+  const ai: Env["ai"] = { handler: null, calls: 0 };
   let locked = false;
   const ui = {
     ButtonSet: { OK: "OK", OK_CANCEL: "OK_CANCEL" }, Button: { OK: "OK", CANCEL: "CANCEL" },
@@ -114,9 +128,9 @@ export function createEnv(): Env {
     JSON, Math, Date, Object, Array, String, Number, Error, RegExp, encodeURIComponent, parseInt, isNaN,
     ScriptApp: {
       getProjectTriggers: () => triggers.map((h) => ({ getHandlerFunction: () => h })),
-      newTrigger: (h: string) => { const b: any = { forSpreadsheet: () => b, onOpen: () => b, create: () => { triggers.push(h); } }; return b; },
+      newTrigger: (h: string) => { const b: any = { forSpreadsheet: () => b, onOpen: () => b, timeBased: () => b, everyDays: () => b, atHour: () => b, create: () => { triggers.push(h); } }; return b; },
     },
-    SpreadsheetApp: { getActiveSpreadsheet: () => ss, getUi: () => { if (!ctxRef.ctx.uiAvailable) throw new Error("Cannot call SpreadsheetApp.getUi() from this context."); return ui; } },
+    SpreadsheetApp: { getActiveSpreadsheet: () => ss, openById: (id: string) => { const hit = registry.get(id); if (!hit) throw new Error("not found"); return hit; }, getUi: () => { if (!ctxRef.ctx.uiAvailable) throw new Error("Cannot call SpreadsheetApp.getUi() from this context."); return ui; } },
     LockService: { getScriptLock: () => ({ tryLock: () => { if (locked) return false; locked = true; return true; }, releaseLock: () => { locked = false; } }) },
     PropertiesService: { getScriptProperties: () => ({ getProperty: (k: string) => props.get(k) ?? null, setProperty: (k: string, v: string) => { props.set(k, v); } }) },
     CacheService: { getScriptCache: () => ({ get: (k: string) => cache.get(k) ?? null, put: (k: string, v: string) => { cache.set(k, v); } }) },
@@ -127,7 +141,12 @@ export function createEnv(): Env {
       computeDigest: (_alg: string, text: string) => [...createHash("sha256").update(text, "utf8").digest()].map((b) => (b > 127 ? b - 256 : b)),
     },
     UrlFetchApp: {
-      fetch: (url: string) => {
+      fetch: (url: string, options?: { payload?: string }) => {
+        if (url.startsWith("https://generativelanguage.googleapis.com/")) {
+          ai.calls++;
+          const r = ai.handler ? ai.handler(JSON.parse(options?.payload ?? "{}")) : { code: 500, body: {} };
+          return { getResponseCode: () => r.code, getHeaders: () => ({}), getContentText: () => JSON.stringify(r.body) };
+        }
         if (!url.startsWith("https://oauth2.googleapis.com/tokeninfo")) {
           const page = pages.get(url);
           if (!page) throw new Error("DNS error: " + url);
@@ -150,5 +169,5 @@ export function createEnv(): Env {
   const dir = join(import.meta.dirname, "..", "src");
   const source = readdirSync(dir).filter((f) => f.endsWith(".js")).sort().map((f) => readFileSync(join(dir, f), "utf8")).join("\n");
   vm.runInContext(source, ctx, { filename: "gas-bundle.js" });
-  return { ctx, ss, props, cache, tokens, fetchCount, activeEmail, alerts, pages, triggers, menus };
+  return { ctx, ss, props, cache, tokens, fetchCount, activeEmail, alerts, pages, triggers, menus, ai };
 }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { COMMON_COLUMNS, TABLES } from "../../../packages/schema/src/index.ts";
-import { createEnv, type Env } from "./fake-gas.ts";
+import { createEnv, registry, type Env } from "./fake-gas.ts";
 
 const EMAIL = "owner@example.com";
 
@@ -350,7 +350,7 @@ test("初期セットアップはメニュー用トリガーを1つだけ登録�
   const env = createEnv();
   env.ctx.menuSetup();
   env.ctx.menuSetup();
-  assert.deepEqual(env.triggers, ["cabinetMenu"]);
+  assert.deepEqual(env.triggers, ["cabinetMenu", "dailyMaintenance"]);
   assert.equal(env.props.get("ALLOWED_EMAIL"), "owner@example.com");
   assert.equal(env.menus.n, 2);
 });
@@ -360,7 +360,7 @@ test("setup は画面を出せない状況でも完了する", () => {
   env.ctx.uiAvailable = false;
   assert.match(env.ctx.setup(), /作成したシート/);
   env.ctx.menuSetup();
-  assert.deepEqual(env.triggers, ["cabinetMenu"]);
+  assert.deepEqual(env.triggers, ["cabinetMenu", "dailyMaintenance"]);
   assert.ok(env.ss.getSheetByName("items"));
   assert.equal(env.alerts.length, 0);
 });
@@ -472,4 +472,111 @@ test("整理シート: 列の並びが違っても動き、コレクションも
   row[col("apply")] = true;
   env.ctx.menuCurationApply();
   assert.equal(env.call("sync.pull", {}).tables.collection_items.filter((l: any) => l.deleted_at === "").length, 0);
+});
+
+function aiReply(items: unknown, usage = { promptTokenCount: 1000, candidatesTokenCount: 200 }) {
+  return { code: 200, body: { candidates: [{ content: { parts: [{ text: JSON.stringify(items) }] } }], usageMetadata: usage } };
+}
+
+test("AIで整理: 見積もり、提案の書き込み、費用の記録。反映するまでデータは変わらない", () => {
+  const env = ready();
+  const a = env.call("items.create", { ...url("ai1"), title: "Concrete libraries" }).item;
+  const b = env.call("items.create", { ...url("ai2"), title: "Type specimen", tags: ["typography"] }).item;
+  env.call("items.update", { id: b.id, version: b.version, patch: { summary: "済み" } });
+  const est = plain(env.ctx.aiEstimate_(env.ctx.database_(), env.user));
+  assert.equal(est.count, 1);
+  assert.equal(est.model, "gemini-3.1-flash-lite");
+  assert.ok(est.costJpy > 0 && est.costJpy < 1 && est.withinLimit);
+
+  let prompt = "";
+  env.ai.handler = (body) => {
+    prompt = body.contents[0].parts[0].text;
+    return aiReply([{ id: a.id, tags: ["Architecture", "typography", "=evil()", ""], summary: "図書館建築の <b>調査</b>。" }, { id: "unknown", tags: ["x"], summary: "y" }]);
+  };
+  const out = plain(env.ctx.aiCurate_(env.ctx.database_(), env.user, "key", Date.now() + 60000));
+  assert.equal(out.done, 1);
+  assert.ok(prompt.includes("typography") && prompt.includes("Concrete libraries"));
+  const expectedCost = (1000 / 1e6 * 0.25 + 200 / 1e6 * 1.5) * 155;
+  assert.ok(Math.abs(out.costJpy - expectedCost) < 1e-9);
+
+  const sheet = env.ss.getSheetByName("curation")!;
+  const header = sheet.data[0] as string[];
+  const col = (n: string) => header.indexOf(n);
+  const row = sheet.data.find((r) => r[col("item_id")] === a.id)!;
+  assert.equal(row[col("new_tags")], "Architecture, typography, =evil()");
+  assert.equal(row[col("summary")], "図書館建築の 調査 。");
+  assert.equal(row[col("apply")], true);
+  assert.equal(sheet.data.find((r) => r[col("item_id")] === b.id)![col("apply")], false);
+  assert.equal(env.call("sync.pull", {}).tables.items.find((i: any) => i.id === a.id).summary, "");
+
+  const meta = env.ss.getSheetByName("_meta")!.data;
+  const spent = Number(meta.find((r) => String(r[0]).startsWith("ai_spent_jpy_"))![1]);
+  assert.ok(Math.abs(spent - expectedCost) < 1e-3);
+  env.ctx.menuCurationApply();
+  assert.equal(env.call("sync.pull", {}).tables.items.find((i: any) => i.id === a.id).summary, "図書館建築の 調査 。");
+});
+
+test("AIで整理: 月の上限を超える場合は呼び出さない。APIエラーは理由を返す", () => {
+  const env = ready();
+  env.call("items.create", { ...url("lim1"), title: "A" });
+  const meta = env.ss.getSheetByName("_meta")!;
+  meta.data.find((r) => r[0] === "ai_monthly_limit_jpy")![1] = "0";
+  env.ai.handler = () => aiReply([]);
+  assert.equal(plain(env.ctx.aiEstimate_(env.ctx.database_(), env.user)).withinLimit, false);
+  const out = plain(env.ctx.aiCurate_(env.ctx.database_(), env.user, "key", Date.now() + 60000));
+  assert.equal(env.ai.calls, 0);
+  assert.match(out.stopped, /上限額/);
+  meta.data.find((r) => r[0] === "ai_monthly_limit_jpy")![1] = "300";
+  env.ai.handler = () => ({ code: 429, body: { error: { message: "quota exceeded" } } });
+  assert.equal(code(() => env.ctx.aiCurate_(env.ctx.database_(), env.user, "key", Date.now() + 60000)), "AI_FAILED");
+  env.props.delete("AI_API_KEY");
+  env.ctx.menuAiCurate();
+  assert.match(env.alerts.at(-1)!, /APIキーが未設定/);
+});
+
+test("保守: 30日を過ぎたゴミ箱を消し、関連行も消す。新しい削除は残す", () => {
+  const env = ready();
+  const keep = env.call("items.create", { ...url("p-keep"), tags: ["t"] }).item;
+  const old = env.call("items.create", { ...url("p-old"), tags: ["t", "gone"] }).item;
+  const recent = env.call("items.create", url("p-recent")).item;
+  const c = env.call("collections.create", { name: "C" }).collection;
+  env.call("collections.addItems", { collection_id: c.id, item_ids: [keep.id, old.id] });
+  env.call("items.delete", { id: old.id });
+  env.call("items.delete", { id: recent.id });
+  const items = env.ss.getSheetByName("items")!;
+  const h = items.data[0] as string[];
+  items.data.find((r) => r[h.indexOf("id")] === old.id)![h.indexOf("deleted_at")] = new Date(Date.now() - 31 * 86400000).toISOString();
+
+  env.ctx.dailyMaintenance();
+  const all = env.call("sync.pull", {});
+  assert.deepEqual(all.tables.items.map((i: any) => i.id).sort(), [keep.id, recent.id].sort());
+  assert.ok(all.tables.item_tags.every((l: any) => l.item_id !== old.id));
+  assert.ok(all.tables.collection_items.every((l: any) => l.item_id !== old.id));
+  assert.ok(all.tables.captures.every((x: any) => x.item_id !== old.id));
+  assert.equal(all.tables.item_tags.filter((l: any) => l.item_id === keep.id).length, 1);
+  // 消したあとも通常の操作が続けられる（行番号がずれていない）
+  env.call("items.update", { id: keep.id, version: all.tables.items.find((i: any) => i.id === keep.id).version, patch: { user_note: "after purge" } });
+  assert.equal(env.call("sync.pull", {}).tables.items.find((i: any) => i.id === keep.id).user_note, "after purge");
+  assert.equal(env.call("items.create", url("p-new")).duplicate, false);
+  assert.equal(env.call("sync.pull", {}).tables.items.length, 3);
+});
+
+test("バックアップ: 曜日ごとのファイルを作り、次回は同じファイルを上書きする", () => {
+  const env = ready();
+  env.call("items.create", { ...url("bk1"), title: "=1+1" });
+  const before = registry.size;
+  const now = new Date("2026-11-16T19:00:00Z");
+  const first = plain(env.ctx.backup_(env.ss, env.ctx.database_(), now));
+  assert.equal(first.monthly, true);
+  assert.equal(registry.size, before + 2);
+  env.call("items.create", url("bk2"));
+  const second = plain(env.ctx.backup_(env.ss, env.ctx.database_(), now));
+  assert.equal(second.monthly, false);
+  assert.equal(registry.size, before + 2);
+  const meta = env.ss.getSheetByName("_meta")!.data;
+  const id = String(meta.find((r) => String(r[0]) === `backup_id_${first.day.toLowerCase()}`)![1]);
+  const copy = registry.get(id)!;
+  assert.equal(copy.getSheetByName("items")!.getLastRow(), 3);
+  assert.ok(copy.getSheetByName("items")!.data.some((r) => r.includes("=1+1")));
+  assert.ok(meta.some((r) => r[0] === "last_backup_at"));
 });

@@ -41,9 +41,3 @@ export function openTransition(id: string, update: () => void): void {
     update();
   }, "panel");
 }
-
-/** 詳細パネルからカードへ戻る。 */
-export function closeTransition(update: () => void): void {
-  // 閉じるときは画像を別扱いにせず、パネル全体をひとまとまりで右へ送り出す。
-  start(update, "close");
-}

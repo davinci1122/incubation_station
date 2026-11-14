@@ -94,10 +94,37 @@ Db_.prototype.checkVersion = function (name, row, expected) {
   }
 };
 
+/** 条件に合う行を物理的に取り除く。flush でシート全体を書き直す。戻り値は取り除いた行。 */
+Db_.prototype.removeRows = function (name, predicate) {
+  var t = this.table(name);
+  var removed = t.rows.filter(predicate);
+  if (removed.length > 0) {
+    t.rows = t.rows.filter(function (r) { return !predicate(r); });
+    t.rewrite = true;
+  }
+  return removed;
+};
+
 Db_.prototype.flush = function () {
   for (var name in this.tables) {
     var t = this.tables[name];
     var width = t.header.length;
+    if (t.rewrite) {
+      if (t.lastRow > 1) t.sheet.getRange(2, 1, t.lastRow - 1, width).clearContent();
+      if (t.rows.length > 0) {
+        var over = t.rows.length + 1 - t.sheet.getMaxRows();
+        if (over > 0) t.sheet.insertRowsAfter(t.sheet.getMaxRows(), over);
+        var all = t.sheet.getRange(2, 1, t.rows.length, width);
+        all.setNumberFormat("@");
+        all.setValues(t.rows.map(function (r) { return rowCells_(t, r); }));
+      }
+      t.rows.forEach(function (r, i) { r._row = i + 2; });
+      t.lastRow = t.rows.length + 1;
+      t.rewrite = false;
+      t.dirty = [];
+      t.appended = [];
+      continue;
+    }
     for (var i = 0; i < t.dirty.length; i++) {
       t.sheet.getRange(t.dirty[i]._row, 1, 1, width).setValues([rowCells_(t, t.dirty[i])]);
     }
