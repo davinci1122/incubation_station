@@ -354,3 +354,13 @@ test("初期セットアップはメニュー用トリガーを1つだけ登録�
   assert.equal(env.props.get("ALLOWED_EMAIL"), "owner@example.com");
   assert.equal(env.menus.n, 2);
 });
+
+test("setup は画面を出せない状況でも完了する", () => {
+  const env = createEnv();
+  env.ctx.uiAvailable = false;
+  assert.match(env.ctx.setup(), /作成したシート/);
+  env.ctx.menuSetup();
+  assert.deepEqual(env.triggers, ["cabinetMenu"]);
+  assert.ok(env.ss.getSheetByName("items"));
+  assert.equal(env.alerts.length, 0);
+});

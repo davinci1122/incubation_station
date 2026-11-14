@@ -107,14 +107,16 @@ export function createEnv(): Env {
     alert: (...args: string[]) => { alerts.push(args.filter((a) => typeof a === "string").join(" | ")); return "OK"; },
     createMenu: () => { const m: any = { addItem: () => m, addSeparator: () => m, addToUi: () => { menus.n++; } }; return m; },
   };
+  const ctxRef: { ctx: any } = { ctx: null };
   const sandbox: Record<string, unknown> = {
     console: { error: () => undefined, log: () => undefined },
+    uiAvailable: true,
     JSON, Math, Date, Object, Array, String, Number, Error, RegExp, encodeURIComponent, parseInt, isNaN,
     ScriptApp: {
       getProjectTriggers: () => triggers.map((h) => ({ getHandlerFunction: () => h })),
       newTrigger: (h: string) => { const b: any = { forSpreadsheet: () => b, onOpen: () => b, create: () => { triggers.push(h); } }; return b; },
     },
-    SpreadsheetApp: { getActiveSpreadsheet: () => ss, getUi: () => ui },
+    SpreadsheetApp: { getActiveSpreadsheet: () => ss, getUi: () => { if (!ctxRef.ctx.uiAvailable) throw new Error("Cannot call SpreadsheetApp.getUi() from this context."); return ui; } },
     LockService: { getScriptLock: () => ({ tryLock: () => { if (locked) return false; locked = true; return true; }, releaseLock: () => { locked = false; } }) },
     PropertiesService: { getScriptProperties: () => ({ getProperty: (k: string) => props.get(k) ?? null, setProperty: (k: string, v: string) => { props.set(k, v); } }) },
     CacheService: { getScriptCache: () => ({ get: (k: string) => cache.get(k) ?? null, put: (k: string, v: string) => { cache.set(k, v); } }) },
@@ -144,6 +146,7 @@ export function createEnv(): Env {
     },
   };
   const ctx = vm.createContext(sandbox);
+  ctxRef.ctx = ctx;
   const dir = join(import.meta.dirname, "..", "src");
   const source = readdirSync(dir).filter((f) => f.endsWith(".js")).sort().map((f) => readFileSync(join(dir, f), "utf8")).join("\n");
   vm.runInContext(source, ctx, { filename: "gas-bundle.js" });

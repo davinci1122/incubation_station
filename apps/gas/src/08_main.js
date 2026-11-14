@@ -73,14 +73,30 @@ function menuUser_() {
   return userFromEmail_(Session.getActiveUser().getEmail());
 }
 
-function menuSetup() {
-  var ui = SpreadsheetApp.getUi();
+/**
+ * 初期セットアップ。エディタから実行する（画面のダイアログを使わないので、どこから実行しても動く）。
+ * 何度実行しても安全。
+ */
+function setup() {
   var p = props_();
   if (!p.getProperty("ALLOWED_EMAIL")) p.setProperty("ALLOWED_EMAIL", Session.getActiveUser().getEmail());
   var result = setupDatabase_(SpreadsheetApp.getActiveSpreadsheet());
   ensureMenuTrigger_();
-  cabinetMenu();
-  ui.alert("セットアップ完了", result.created.length > 0 ? "作成したシート: " + result.created.join(", ") : "すべてのシートは作成済みです。", ui.ButtonSet.OK);
+  var message = result.created.length > 0 ? "作成したシート: " + result.created.join(", ") : "すべてのシートは作成済みです。";
+  console.log("セットアップ完了。" + message);
+  return message;
+}
+
+/** メニューからの初期セットアップ。 */
+function menuSetup() {
+  var message = setup();
+  try {
+    cabinetMenu();
+    var ui = SpreadsheetApp.getUi();
+    ui.alert("セットアップ完了", message, ui.ButtonSet.OK);
+  } catch (e) {
+    // エディタから実行した場合など、画面を出せない状況では何もしない。
+  }
 }
 
 function menuCurationRefresh() {
