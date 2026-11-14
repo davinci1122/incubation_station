@@ -25,6 +25,6 @@ Google Sheets を正とするデータAPI（Google Apps Script）。スプレッ
 ## 自動反映
 
 `main` に `apps/gas` の変更が入ると、GitHub Actions（`deploy-gas.yml`）がテスト後に Apps Script へ反映し、
-既存のウェブアプリを新バージョンに更新します。Secrets に `CLASP_TOKEN`（`~/.clasprc.json` の中身）と `GAS_SCRIPT_ID`（スクリプトID）が必要です。
+既存のウェブアプリを新バージョンに更新します。Secrets に `CLASP_TOKEN`（`~/.clasprc.json` の中身）が必要です。反映先のスクリプトIDはワークフローに記載しています。
 
 権限（`appsscript.json` の `oauthScopes`）を変えた場合だけ、エディタで `setup` を1回実行して承認し直してください。

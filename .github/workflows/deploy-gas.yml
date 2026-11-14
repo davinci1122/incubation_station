@@ -3,7 +3,8 @@ name: Deploy GAS
 # apps/gas が変わったら、テスト → Apps Script へ反映 → 既存のウェブアプリを新バージョンに更新する。
 # 必要な Secrets:
 #   CLASP_TOKEN（または CLASPRC_JSON） … clasp login で作られた ~/.clasprc.json の中身
-#   GAS_SCRIPT_ID（または CLASP_JSON）  … スクリプトID（Apps Script の「プロジェクトの設定」にある）
+# 反映先のスクリプトIDは下の env に書いてある（IDだけでは何もできないので公開してよい値）。
+#   Secret の GAS_SCRIPT_ID / CLASP_JSON があればそちらを優先する。
 on:
   push:
     branches: [main]
@@ -20,6 +21,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  GAS_SCRIPT_ID: 13XWGyKHOHXFHmqg_HwGtpZ7oqCDCBk6UYFeu6CruUNnwBdtoA_qp5x-L
   # ウェブアプリのURL（/macros/s/<ID>/exec）に含まれるデプロイID。公開済みの値。
   GAS_DEPLOYMENT_ID: AKfycbwWPn0aLjpncvus3WITf1OouwQ6aZCHlmliWwmcjT8xA4cQweXOEFfMZsnnXV9VALYu
 
@@ -36,7 +38,7 @@ jobs:
         id: secrets
         env:
           CLASPRC_JSON: ${{ secrets.CLASP_TOKEN || secrets.CLASPRC_JSON }}
-          SCRIPT: ${{ secrets.GAS_SCRIPT_ID || secrets.CLASP_JSON }}
+          SCRIPT: ${{ secrets.GAS_SCRIPT_ID || secrets.CLASP_JSON || env.GAS_SCRIPT_ID }}
         run: |
           [ -z "$CLASPRC_JSON" ] && echo "::warning::Secret CLASP_TOKEN が見つかりません。"
           [ -z "$SCRIPT" ] && echo "::warning::Secret GAS_SCRIPT_ID が見つかりません。"
@@ -62,7 +64,7 @@ jobs:
         if: steps.secrets.outputs.ready == 'true'
         env:
           CLASPRC_JSON: ${{ secrets.CLASP_TOKEN || secrets.CLASPRC_JSON }}
-          SCRIPT: ${{ secrets.GAS_SCRIPT_ID || secrets.CLASP_JSON }}
+          SCRIPT: ${{ secrets.GAS_SCRIPT_ID || secrets.CLASP_JSON || env.GAS_SCRIPT_ID }}
         run: |
           umask 077
           printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
