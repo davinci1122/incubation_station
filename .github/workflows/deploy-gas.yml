@@ -1,9 +1,9 @@
 name: Deploy GAS
 
 # apps/gas が変わったら、テスト → Apps Script へ反映 → 既存のウェブアプリを新バージョンに更新する。
-# 必要な Secrets（Google 公式の CI/CD ガイドと同じ名前）:
-#   CLASPRC_JSON … clasp login で作られた ~/.clasprc.json の中身
-#   CLASP_JSON   … .clasp.json の中身（scriptId を含む）
+# 必要な Secrets:
+#   CLASP_TOKEN（または CLASPRC_JSON） … clasp login で作られた ~/.clasprc.json の中身
+#   GAS_SCRIPT_ID（または CLASP_JSON）  … スクリプトID（Apps Script の「プロジェクトの設定」にある）
 on:
   push:
     branches: [main]
@@ -35,11 +35,11 @@ jobs:
       - name: Check secrets
         id: secrets
         env:
-          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
-          CLASP_JSON: ${{ secrets.CLASP_JSON }}
+          CLASPRC_JSON: ${{ secrets.CLASP_TOKEN || secrets.CLASPRC_JSON }}
+          SCRIPT: ${{ secrets.GAS_SCRIPT_ID || secrets.CLASP_JSON }}
         run: |
-          if [ -z "$CLASPRC_JSON" ] || [ -z "$CLASP_JSON" ]; then
-            echo "::notice::CLASPRC_JSON / CLASP_JSON が未設定のため、GAS の反映をスキップしました。"
+          if [ -z "$CLASPRC_JSON" ] || [ -z "$SCRIPT" ]; then
+            echo "::notice::CLASP_TOKEN と GAS_SCRIPT_ID が未設定のため、GAS の反映をスキップしました。"
             echo "ready=false" >> "$GITHUB_OUTPUT"
           else
             echo "ready=true" >> "$GITHUB_OUTPUT"
@@ -59,15 +59,16 @@ jobs:
       - name: Write credentials
         if: steps.secrets.outputs.ready == 'true'
         env:
-          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
-          CLASP_JSON: ${{ secrets.CLASP_JSON }}
+          CLASPRC_JSON: ${{ secrets.CLASP_TOKEN || secrets.CLASPRC_JSON }}
+          SCRIPT: ${{ secrets.GAS_SCRIPT_ID || secrets.CLASP_JSON }}
         run: |
           umask 077
           printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
           # rootDir は手元のパスが入っていることがあるので、ここで書き換える。
-          printf '%s' "$CLASP_JSON" | node -e '
+          printf '%s' "$SCRIPT" | node -e '
             let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
-              const c = JSON.parse(s);
+              const t = s.trim();
+              const c = t.startsWith("{") ? JSON.parse(t) : { scriptId: t };
               if (!c.scriptId) { console.error("CLASP_JSON に scriptId がありません"); process.exit(1); }
               c.rootDir = "out";
               delete c.filePushOrder;
