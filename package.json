@@ -4,7 +4,7 @@
   "packageManager": "pnpm@10.28.0",
   "engines": { "node": ">=22.18" },
   "scripts": {
-    "test": "node --test \"packages/*/src/**/*.test.ts\"",
+    "test": "node --test \"packages/*/src/**/*.test.ts\" \"apps/gas/test/**/*.test.ts\"",
     "typecheck": "tsc -p tsconfig.json",
     "build": "pnpm --filter @cabinet/web build",
     "dev": "pnpm --filter @cabinet/web dev"

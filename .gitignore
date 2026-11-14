@@ -20,3 +20,6 @@ next-env.d.ts
 client_secret*.json
 
 .DS_Store
+
+# 貼り付け用に生成した GAS のコードはコミットする
+!apps/gas/dist/
