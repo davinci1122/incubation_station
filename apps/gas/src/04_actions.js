@@ -2,7 +2,7 @@
  * データAPIの本体。入口（doPost / api）で認証を済ませたあとに呼ばれる。
  * すべての読み書きは user.id の行に限定する。
  */
-var READ_ACTIONS = { "sync.pull": true, "ping": true };
+var READ_ACTIONS = { "sync.pull": true, "ping": true, "ai.estimate": true };
 
 function handle_(db, user, action, params) {
   var p = params || {};
@@ -25,6 +25,9 @@ function handle_(db, user, action, params) {
     case "collections.addItems": return collectionsAddItems_(db, user, p);
     case "collections.removeItems": return collectionsRemoveItems_(db, user, p);
     case "collections.reorder": return collectionsReorder_(db, user, p);
+    case "ai.estimate": return aiEstimateAction_(db, user);
+    case "ai.curate": return aiSuggestBatch_(db, user, aiKeyOrThrow_(), p.exclude);
+    case "ai.apply": return aiApply_(db, user, p.suggestions);
     default: throw err_("UNKNOWN_ACTION", "不明な操作です: " + action);
   }
 }

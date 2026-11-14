@@ -310,7 +310,7 @@ Db_.prototype.setMeta = function (key, value) {
  * データAPIの本体。入口（doPost / api）で認証を済ませたあとに呼ばれる。
  * すべての読み書きは user.id の行に限定する。
  */
-var READ_ACTIONS = { "sync.pull": true, "ping": true };
+var READ_ACTIONS = { "sync.pull": true, "ping": true, "ai.estimate": true };
 
 function handle_(db, user, action, params) {
   var p = params || {};
@@ -333,6 +333,9 @@ function handle_(db, user, action, params) {
     case "collections.addItems": return collectionsAddItems_(db, user, p);
     case "collections.removeItems": return collectionsRemoveItems_(db, user, p);
     case "collections.reorder": return collectionsReorder_(db, user, p);
+    case "ai.estimate": return aiEstimateAction_(db, user);
+    case "ai.curate": return aiSuggestBatch_(db, user, aiKeyOrThrow_(), p.exclude);
+    case "ai.apply": return aiApply_(db, user, p.suggestions);
     default: throw err_("UNKNOWN_ACTION", "不明な操作です: " + action);
   }
 }
@@ -1584,6 +1587,86 @@ function aiCurate_(db, user, apiKey, deadlineMs) {
   }
   out.spentJpy = spent;
   return out;
+}
+
+/**
+ * アプリから1バッチずつ呼ぶ（既定10件）。シートには書かず、提案だけを返す。
+ * exclude は同じ実行で処理済みのIDで、次のバッチに同じアイテムが出ないようにする。
+ */
+function aiSuggestBatch_(db, user, apiKey, exclude) {
+  var cfg = aiConfig_(db);
+  var skip = {};
+  (exclude || []).forEach(function (id) { skip[String(id)] = true; });
+  var pending = aiTargets_(db, user, cfg).filter(function (i) { return !skip[i.id]; });
+  var batch = pending.slice(0, cfg.batchSize);
+  var spentKey = aiMonthKey_();
+  var spent = Number(db.getMeta(spentKey) || "0");
+  var out = {
+    suggestions: [], processed: [], remaining: pending.length - batch.length,
+    costJpy: 0, spentJpy: spent, limitJpy: cfg.limitJpy, stopped: ""
+  };
+  if (batch.length === 0) return out;
+
+  var existing = db.live("tags", user.id).map(function (t) { return t.name; });
+  var prompt = aiPrompt_(batch, existing);
+  var expected = aiCostJpy_(cfg, prompt.length, batch.length * AI_OUTPUT_TOKENS_PER_ITEM);
+  if (spent + expected > cfg.limitJpy) {
+    out.stopped = "今月の上限額（" + cfg.limitJpy + "円）に達するため停止しました。";
+    out.remaining = pending.length;
+    return out;
+  }
+
+  var res = aiCall_(cfg, apiKey, prompt);
+  var cost = aiCostJpy_(cfg, res.inputTokens, res.outputTokens);
+  spent += cost;
+  db.setMeta(spentKey, String(Math.round(spent * 10000) / 10000));
+  out.costJpy = cost;
+  out.spentJpy = spent;
+  out.processed = batch.map(function (i) { return i.id; });
+
+  var byId = {};
+  res.items.forEach(function (it) { if (it && it.id) byId[String(it.id)] = it; });
+  batch.forEach(function (item) {
+    var hit = byId[item.id];
+    if (!hit) return;
+    var tags = (Array.isArray(hit.tags) ? hit.tags : [])
+      .map(cleanTagName_).filter(function (t) { return t !== "" && t.length <= LIMITS.tagName; }).slice(0, 4);
+    var summary = item.summary === "" ? squash_(String(hit.summary || "")).slice(0, 200) : "";
+    if (tags.length === 0 && summary === "") return;
+    out.suggestions.push({ id: item.id, title: item.title, domain: item.domain, tags: tags, summary: summary });
+  });
+  return out;
+}
+
+/** 提案を反映する。タグは既存のものに足す（消さない）。要約は空のときだけ入れる。 */
+function aiApply_(db, user, list) {
+  var applied = 0;
+  (Array.isArray(list) ? list : []).slice(0, 200).forEach(function (s) {
+    var item = ownLive_(db, user, "items", s && s.id);
+    var added = (Array.isArray(s.tags) ? s.tags : []).map(cleanTagName_)
+      .filter(function (t) { return t !== "" && t.length <= LIMITS.tagName; });
+    if (added.length > 0) {
+      var merged = itemTagNames_(db, user, item.id).concat(added);
+      setItemTags_(db, user, item.id, merged.slice(0, LIMITS.tagsPerItem));
+    }
+    var summary = String(s.summary || "").slice(0, LIMITS.summary);
+    if (summary !== "" && item.summary === "") db.update("items", item, { summary: summary, updated_at: now_() });
+    applied++;
+  });
+  return { applied: applied };
+}
+
+/** アプリ向けの見積もり。APIキーの有無も返す（キーの値は返さない）。 */
+function aiEstimateAction_(db, user) {
+  var est = aiEstimate_(db, user);
+  est.hasKey = String(props_().getProperty("AI_API_KEY") || "") !== "";
+  return est;
+}
+
+function aiKeyOrThrow_() {
+  var key = String(props_().getProperty("AI_API_KEY") || "");
+  if (key === "") throw err_("AI_NOT_CONFIGURED", "Gemini APIキーが未設定です。スクリプト プロパティに AI_API_KEY を設定してください。");
+  return key;
 }
 
 // ===== 11_maintenance.js =====
