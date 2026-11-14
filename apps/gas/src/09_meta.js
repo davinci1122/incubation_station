@@ -108,6 +108,20 @@ function parseMeta_(html, baseUrl) {
   text = text.replace(/<(script|style|noscript|svg|nav|header|footer|aside|form|template)\b[\s\S]*?<\/\1>/gi, " ").replace(/<!--[\s\S]*?-->/g, " ");
   var excerpt = squash_(text).slice(0, META_LIMITS.excerpt);
 
+  // 代表画像の指定（OGP）がないページは、本文の最初の画像を使う。飾り用の小さな画像は避ける。
+  if (image === "") {
+    var imgs = (body ? body[1] : src).match(/<img\b[^>]*>/gi) || [];
+    for (var k = 0; k < imgs.length && image === ""; k++) {
+      var ia = attrs_(imgs[k]);
+      var cand = ia.src || ia["data-src"] || "";
+      var w = Number(ia.width || 0), hgt = Number(ia.height || 0);
+      if (cand === "" || /^data:/i.test(cand)) continue;
+      if ((w > 0 && w < 80) || (hgt > 0 && hgt < 80)) continue;
+      if (/(^|[\/_.-])(icon|logo|spacer|blank|pixel|banner|btn|button|arrow|sprite|counter)([\/_.-]|\d|$)/i.test(cand)) continue;
+      image = resolveUrl_(baseUrl, cand);
+    }
+  }
+
   return {
     title: squash_(title).slice(0, LIMITS.title), description: squash_(description).slice(0, LIMITS.description),
     image_url: image.slice(0, LIMITS.url), favicon_url: favicon.slice(0, LIMITS.url), published_at: published,

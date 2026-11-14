@@ -84,8 +84,14 @@ function itemsCreate_(db, user, p) {
   if (duplicate && p.recapture === false) return { item: publicRow_(item), duplicate: true };
 
   if (!item) {
+    // 端末側で採番したIDを受け取ると、応答を待たずにカードを表示できる。
+    var newId = String(p.id || "").toLowerCase();
+    if (newId !== "") {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(newId)) throw err_("INVALID", "IDの形式が正しくありません。");
+      if (db.table("items").rows.some(function (r) { return r.id === newId; })) throw err_("DUPLICATE", "同じIDのアイテムがあります。");
+    }
     item = db.insert("items", {
-      id: Utilities.getUuid(), user_id: user.id, original_url: original, normalized_url: normalized,
+      id: newId || Utilities.getUuid(), user_id: user.id, original_url: original, normalized_url: normalized,
       url_hash: hash, title: str_(p.title, LIMITS.title, "タイトル"), domain: domainOf_(normalized),
       content_type: "page", user_note: str_(p.user_note, LIMITS.note, "メモ"), is_favorite: "false",
       capture_status: "pending", created_at: now, updated_at: now

@@ -364,3 +364,22 @@ test("setup は画面を出せない状況でも完了する", () => {
   assert.ok(env.ss.getSheetByName("items"));
   assert.equal(env.alerts.length, 0);
 });
+
+test("代表画像の指定がないページは本文の最初の画像を使う", () => {
+  const env = createEnv();
+  const html = `<html><head><title>図</title></head><body>
+    <img src="img/spacer.gif"><img src="data:image/gif;base64,AAAA"><img src="logo.png"><img src="bullet.gif" width="12" height="12">
+    <img src="zo_kame_hebi.jpg" width="600" height="450" alt="図"><img src="second.jpg"></body></html>`;
+  assert.equal(plain(env.ctx.parseMeta_(html, "https://a.example/cosmo/fig/page.html")).image_url, "https://a.example/cosmo/fig/zo_kame_hebi.jpg");
+  const withOg = `<head><meta property="og:image" content="https://cdn.example/og.png"></head><body><img src="x.jpg"></body>`;
+  assert.equal(plain(env.ctx.parseMeta_(withOg, "https://a.example/")).image_url, "https://cdn.example/og.png");
+  assert.equal(plain(env.ctx.parseMeta_("<body><img src='icon.png'></body>", "https://a.example/")).image_url, "");
+});
+
+test("端末で採番したIDで登録できる。不正・重複は拒否する", () => {
+  const env = ready();
+  const id = "0b9d4c0e-6f0a-4f2b-9a53-1c2d3e4f5a6b";
+  assert.equal(env.call("items.create", { ...url("cid"), id }).item.id, id);
+  assert.equal(code(() => env.call("items.create", { ...url("cid2"), id })), "DUPLICATE");
+  assert.equal(code(() => env.call("items.create", { ...url("cid3"), id: "=1+1" })), "INVALID");
+});

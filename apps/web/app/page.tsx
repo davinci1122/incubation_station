@@ -1,15 +1,16 @@
 "use client";
 
-import { normalizeUrl } from "@cabinet/url";
+import { displayDomain, normalizeUrl } from "@cabinet/url";
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { AddUrl } from "@/components/AddUrl";
 import { Card } from "@/components/Card";
 import { ItemPanel, type ItemActions } from "@/components/ItemPanel";
 import { Login } from "@/components/Login";
 import { Orbs } from "@/components/Orbs";
-import { ApiError, call } from "@/lib/api";
+import { ApiError } from "@/lib/api";
 import { getToken, signOut, subscribeToken } from "@/lib/google";
-import { clearLocal, getSnapshot, restore, subscribe, sync, type Row, type Snapshot } from "@/lib/store";
+import { createItem, deleteItem, refetchItem, setItemTags, updateItem } from "@/lib/mutate";
+import { clearLocal, getSnapshot, restore, subscribe, sync, type Snapshot } from "@/lib/store";
 
 const EMPTY: Snapshot = {
   cursor: 0, syncing: false, loaded: false,
@@ -25,7 +26,6 @@ export default function HomePage() {
   const data = useSyncExternalStore(subscribe, getSnapshot, () => EMPTY);
   const [query, setQuery] = useState("");
   const [adding, setAdding] = useState(false);
-  const [addBusy, setAddBusy] = useState(false);
   const [addError, setAddError] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
@@ -82,53 +82,60 @@ export default function HomePage() {
   const total = useMemo(() => data.tables.items.filter((i) => i.deleted_at === "").length, [data.tables.items]);
   const open = openId ? data.tables.items.find((i) => i.id === openId && i.deleted_at === "") : undefined;
 
-  const addUrl = async (input: string) => {
+  // 詳細パネルの開閉をブラウザの履歴に載せ、「戻る」で閉じられるようにする。
+  useEffect(() => {
+    const read = () => {
+      const m = /^#item=([0-9a-f-]{36})$/.exec(window.location.hash);
+      setOpenId(m ? (m[1] ?? null) : null);
+    };
+    read();
+    window.addEventListener("popstate", read);
+    return () => window.removeEventListener("popstate", read);
+  }, []);
+
+  const openItem = useCallback((id: string) => {
+    const target = `#item=${id}`;
+    if (window.location.hash.startsWith("#item=")) window.history.replaceState(null, "", target);
+    else window.history.pushState(null, "", target);
+    setOpenId(id);
+  }, []);
+
+  const closeItem = useCallback(() => {
+    if (window.location.hash.startsWith("#item=")) window.history.back();
+    else setOpenId(null);
+  }, []);
+
+  const addUrl = (input: string) => {
     const normalized = normalizeUrl(input);
     if (!normalized) {
       setAddError("http または https で始まるURLを入力してください。");
       return;
     }
-    setAddBusy(true);
+    setAdding(false);
     setAddError("");
-    try {
-      const created = await call<{ item: Row; duplicate: boolean }>("items.create", {
-        original_url: input, normalized_url: normalized, recapture: false,
-      });
-      setAdding(false);
-      await sync();
-      if (created.duplicate) {
-        setOpenId(created.item.id ?? null);
-        setNotice("このURLは保存済みです。");
-      } else {
-        // ページ情報の取得は数秒かかるので、カードを先に表示してから行う。
-        void call("items.fetchMeta", { id: created.item.id }).catch(() => undefined).then(() => refresh());
-      }
-    } catch (e) {
-      setAddError(messageOf(e));
-    } finally {
-      setAddBusy(false);
-    }
+    setNotice("");
+    const { done } = createItem(input, normalized, displayDomain(normalized) ?? "");
+    done
+      .then((r) => {
+        if (r.duplicateOf !== null) {
+          setNotice("このURLは保存済みです。");
+          openItem(r.duplicateOf);
+        }
+      })
+      .catch((e: unknown) => setNotice(`保存できませんでした。${messageOf(e)}`));
   };
 
-  const guarded = async (fn: () => Promise<unknown>) => {
-    try {
-      await fn();
-    } catch (e) {
-      await refresh();
+  const friendly = (p: Promise<void>) =>
+    p.catch((e: unknown) => {
       if (e instanceof ApiError && e.code === "CONFLICT") throw new Error("他の端末で更新されていたため、最新の内容を読み込みました。もう一度編集してください。");
       throw e;
-    }
-    await sync();
-  };
+    });
 
   const actions: ItemActions = {
-    update: (item, patch) => guarded(() => call("items.update", { id: item.id, version: item.version, patch })),
-    setTags: (item, tags) => guarded(() => call("items.setTags", { id: item.id, tags })),
-    refetch: (item) => guarded(async () => {
-      await call("items.refetch", { id: item.id });
-      await call("items.fetchMeta", { id: item.id });
-    }),
-    remove: (item) => guarded(() => call("items.delete", { id: item.id, version: item.version })),
+    update: (id, patch) => friendly(updateItem(id, patch)),
+    setTags: (id, tags) => friendly(setItemTags(id, tags)),
+    refetch: (id) => friendly(refetchItem(id)),
+    remove: (id) => friendly(deleteItem(id)),
   };
 
   if (!token) return <Login notice={notice} />;
@@ -178,7 +185,7 @@ export default function HomePage() {
         {items.length > 0 ? (
           <div className="mt-9 columns-2 gap-4 sm:gap-6 md:columns-3 xl:columns-4 2xl:columns-5">
             {items.map((item) => (
-              <Card key={item.id} item={item} tags={tagsByItem.get(item.id ?? "") ?? []} onOpen={() => setOpenId(item.id ?? null)} />
+              <Card key={item.id} item={item} tags={tagsByItem.get(item.id ?? "") ?? []} onOpen={() => openItem(item.id ?? "")} />
             ))}
           </div>
         ) : (
@@ -193,8 +200,8 @@ export default function HomePage() {
         )}
       </div>
 
-      {open && <ItemPanel item={open} tags={tagsByItem.get(open.id ?? "") ?? []} actions={actions} onClose={() => setOpenId(null)} />}
-      {adding && <AddUrl busy={addBusy} error={addError} onSubmit={(u) => void addUrl(u)} onClose={() => setAdding(false)} />}
+      {open && <ItemPanel item={open} tags={tagsByItem.get(open.id ?? "") ?? []} actions={actions} onClose={closeItem} />}
+      {adding && <AddUrl busy={false} error={addError} onSubmit={addUrl} onClose={() => setAdding(false)} />}
     </div>
   );
 }

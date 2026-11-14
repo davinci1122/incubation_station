@@ -67,6 +67,15 @@ body {
   outline-offset: 2px;
 }
 
+/* iOS は 16px 未満の入力欄にフォーカスすると画面を拡大し、そのまま戻らない。 */
+@media (max-width: 640px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     animation-duration: 0.01ms !important;

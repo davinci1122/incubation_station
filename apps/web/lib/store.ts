@@ -99,6 +99,17 @@ export function sync(): Promise<void> {
   return running;
 }
 
+/** サーバーの応答や画面上の先行反映を取り込む。 */
+export function upsert(tables: Partial<Record<TableName, Row[]>>): void {
+  apply(tables);
+  persist();
+  emit();
+}
+
+export function getRow(table: TableName, key: string): Row | undefined {
+  return maps[table].get(key);
+}
+
 export function subscribe(fn: () => void): () => void {
   listeners.add(fn);
   return () => listeners.delete(fn);

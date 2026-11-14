@@ -356,8 +356,14 @@ function itemsCreate_(db, user, p) {
   if (duplicate && p.recapture === false) return { item: publicRow_(item), duplicate: true };
 
   if (!item) {
+    // 端末側で採番したIDを受け取ると、応答を待たずにカードを表示できる。
+    var newId = String(p.id || "").toLowerCase();
+    if (newId !== "") {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(newId)) throw err_("INVALID", "IDの形式が正しくありません。");
+      if (db.table("items").rows.some(function (r) { return r.id === newId; })) throw err_("DUPLICATE", "同じIDのアイテムがあります。");
+    }
     item = db.insert("items", {
-      id: Utilities.getUuid(), user_id: user.id, original_url: original, normalized_url: normalized,
+      id: newId || Utilities.getUuid(), user_id: user.id, original_url: original, normalized_url: normalized,
       url_hash: hash, title: str_(p.title, LIMITS.title, "タイトル"), domain: domainOf_(normalized),
       content_type: "page", user_note: str_(p.user_note, LIMITS.note, "メモ"), is_favorite: "false",
       capture_status: "pending", created_at: now, updated_at: now
@@ -1060,6 +1066,20 @@ function parseMeta_(html, baseUrl) {
   if (focus && squash_(focus[2]).length > 200) text = focus[2];
   text = text.replace(/<(script|style|noscript|svg|nav|header|footer|aside|form|template)\b[\s\S]*?<\/\1>/gi, " ").replace(/<!--[\s\S]*?-->/g, " ");
   var excerpt = squash_(text).slice(0, META_LIMITS.excerpt);
+
+  // 代表画像の指定（OGP）がないページは、本文の最初の画像を使う。飾り用の小さな画像は避ける。
+  if (image === "") {
+    var imgs = (body ? body[1] : src).match(/<img\b[^>]*>/gi) || [];
+    for (var k = 0; k < imgs.length && image === ""; k++) {
+      var ia = attrs_(imgs[k]);
+      var cand = ia.src || ia["data-src"] || "";
+      var w = Number(ia.width || 0), hgt = Number(ia.height || 0);
+      if (cand === "" || /^data:/i.test(cand)) continue;
+      if ((w > 0 && w < 80) || (hgt > 0 && hgt < 80)) continue;
+      if (/(^|[\/_.-])(icon|logo|spacer|blank|pixel|banner|btn|button|arrow|sprite|counter)([\/_.-]|\d|$)/i.test(cand)) continue;
+      image = resolveUrl_(baseUrl, cand);
+    }
+  }
 
   return {
     title: squash_(title).slice(0, LIMITS.title), description: squash_(description).slice(0, LIMITS.description),
