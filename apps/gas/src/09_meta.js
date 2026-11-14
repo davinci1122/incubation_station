@@ -20,6 +20,36 @@ function isBlockedHost_(hostname) {
   return /\.(localhost|local|internal|lan|intranet|corp|home\.arpa)$/.test(host);
 }
 
+/** 広告・計測・飾りと思われる画像なら true。 */
+function isJunkImage_(url) {
+  var u = String(url || "").toLowerCase();
+  if (u === "" || u.indexOf("data:") === 0 || /\.svg(\?|#|$)/.test(u)) return true;
+  if (/(doubleclick|googlesyndication|googleadservices|adservice|amazon-adsystem|adnxs|criteo|taboola|outbrain|scorecardresearch|facebook\.com\/tr|google-analytics|googletagmanager|adsrvr|rubiconproject|pubmatic|openx|yimg\.jp\/images\/listing|i-mobile|microad|logly|popin|fluct|zucks|nend|gssprt|ad-stir)/.test(u)) return true;
+  if (/(^|[\/_.-])(ads?|adv|advert|banners?|sponsor|pr|icon|icons|logo|logos|favicon|spacer|blank|pixel|beacon|tracking|btn|button|arrow|sprite|counter|avatar|emoji)([\/_.-]|\d|$)/.test(u)) return true;
+  return false;
+}
+
+/**
+ * ページ内の画像URLをすべての場所から探す（img、srcset、CSSの背景、JavaScriptに埋め込まれたデータ）。
+ * JavaScriptで描画するサイトでも、データとして画像URLを持っていることが多い。
+ */
+function findImageInSource_(src, baseUrl) {
+  var text = String(src).replace(/\\u002[fF]/g, "/").replace(/\\\//g, "/").replace(/&amp;/g, "&");
+  var re = /(?:https?:)?\/\/[^\s"'<>()\\,]+?\.(?:jpe?g|png|webp|avif)(?:\?[^\s"'<>()\\]*)?(?=["'\s<>)\\,]|$)/gi;
+  var m;
+  while ((m = re.exec(text)) !== null) {
+    var abs = resolveUrl_(baseUrl, m[0]);
+    if (abs !== "" && !isJunkImage_(abs)) return abs;
+  }
+  // CSS の背景画像は相対パスで書かれることが多い。
+  var css = /url\(\s*["']?([^"')\s]+?\.(?:jpe?g|png|webp|avif)(?:\?[^"')\s]*)?)["']?\s*\)/gi;
+  while ((m = css.exec(text)) !== null) {
+    var bg = resolveUrl_(baseUrl, m[1]);
+    if (bg !== "" && !isJunkImage_(bg)) return bg;
+  }
+  return "";
+}
+
 function hostOf_(url) {
   var m = /^https?:\/\/(?:[^\/?#@]*@)?(\[[^\]]*\]|[^\/?#:]*)/i.exec(url);
   return m ? m[1] : "";
@@ -108,19 +138,25 @@ function parseMeta_(html, baseUrl) {
   text = text.replace(/<(script|style|noscript|svg|nav|header|footer|aside|form|template)\b[\s\S]*?<\/\1>/gi, " ").replace(/<!--[\s\S]*?-->/g, " ");
   var excerpt = squash_(text).slice(0, META_LIMITS.excerpt);
 
-  // 代表画像の指定（OGP）がないページは、本文の最初の画像を使う。飾り用の小さな画像は避ける。
+  // 代表画像の指定（OGP）がないページは、本文の画像を使う。小さな画像・広告・アイコンは避ける。
   if (image === "") {
     var imgs = (body ? body[1] : src).match(/<img\b[^>]*>/gi) || [];
     for (var k = 0; k < imgs.length && image === ""; k++) {
       var ia = attrs_(imgs[k]);
-      var cand = ia.src || ia["data-src"] || "";
+      // 遅延読み込みでは src が仮の画像で、本物は data-src などにある。
+      var srcset = String(ia["data-srcset"] || ia.srcset || "").split(",")[0].trim().split(/\s+/)[0] || "";
+      var cand = [ia["data-src"], ia["data-original"], ia["data-lazy-src"], ia.src, srcset].filter(function (v) {
+        return v && !/^data:/i.test(v);
+      })[0] || "";
       var w = Number(ia.width || 0), hgt = Number(ia.height || 0);
-      if (cand === "" || /^data:/i.test(cand)) continue;
-      if ((w > 0 && w < 80) || (hgt > 0 && hgt < 80)) continue;
-      if (/(^|[\/_.-])(icon|logo|spacer|blank|pixel|banner|btn|button|arrow|sprite|counter)([\/_.-]|\d|$)/i.test(cand)) continue;
-      image = resolveUrl_(baseUrl, cand);
+      if (cand === "") continue;
+      if ((w > 0 && w < 120) || (hgt > 0 && hgt < 80)) continue;
+      var abs = resolveUrl_(baseUrl, cand);
+      if (abs !== "" && !isJunkImage_(abs)) image = abs;
     }
   }
+  // それでもなければ、ページ全体（埋め込みデータを含む）から探す。
+  if (image === "") image = findImageInSource_(src, baseUrl);
 
   return {
     title: squash_(title).slice(0, LIMITS.title), description: squash_(description).slice(0, LIMITS.description),
@@ -188,8 +224,14 @@ function fetchMetaAction_(user, p) {
     var item = ownLive_(db, user, "items", p.id);
     var now = now_();
     var patch = { capture_status: result.ok ? "completed" : "failed", updated_at: now };
+    if (!result.ok && result.error_code !== "SSRF_BLOCKED" && !item.image_url) {
+      patch.image_url = screenshotUrl_(item.original_url);
+    }
     if (result.ok) {
       var m = result.meta;
+      if (!m.image_url && !item.image_url && (!m.content_type || m.content_type === "page" || m.content_type === "article")) {
+        m.image_url = screenshotUrl_(result.page_url || item.original_url);
+      }
       ["description", "image_url", "favicon_url", "published_at", "lang", "content_type", "excerpt"].forEach(function (k) {
         if (m[k] !== undefined && m[k] !== "") patch[k] = m[k];
       });
@@ -222,4 +264,14 @@ function fetchMetaAction_(user, p) {
   } finally {
     lock.releaseLock();
   }
+}
+
+/**
+ * 画像が見つからないページのための、外部サービスによるスクリーンショットのURL。
+ * WordPress.com の mShots（無料・登録不要）。ページのURLがそのサービスに送られる。
+ * 使わない場合は Script Properties に SCREENSHOT_SERVICE=off を設定する。
+ */
+function screenshotUrl_(pageUrl) {
+  if (String(props_().getProperty("SCREENSHOT_SERVICE") || "").toLowerCase() === "off") return "";
+  return "https://s.wordpress.com/mshots/v1/" + encodeURIComponent(pageUrl) + "?w=1200&h=900";
 }

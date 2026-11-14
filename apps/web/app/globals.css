@@ -38,8 +38,8 @@
   --color-muted: var(--cab-muted);
   --color-danger: var(--cab-danger);
 
-  --font-display: var(--font-figtree), var(--font-noto-sans-jp), system-ui, sans-serif;
-  --font-sans: var(--font-inter), var(--font-noto-sans-jp), system-ui, sans-serif;
+  --font-display: "Figtree", "Noto Sans JP", system-ui, sans-serif;
+  --font-sans: "Inter", "Noto Sans JP", system-ui, sans-serif;
 
   --radius-card: 14px;
   --radius-control: 22px;
@@ -65,6 +65,78 @@ body {
 :focus-visible {
   outline: 2px solid var(--cab-text);
   outline-offset: 2px;
+}
+
+/* ---------- 動き ---------- */
+:root {
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(14px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes fade-out {
+  to { opacity: 0; }
+}
+@keyframes sheet-in {
+  from { opacity: 0; transform: translateY(24px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes panel-in {
+  from { opacity: 0; transform: translateX(48px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes panel-out {
+  to { opacity: 0; transform: translateX(48px); }
+}
+@keyframes view-in {
+  from { opacity: 0; transform: translateY(12px); }
+}
+@keyframes view-out {
+  to { opacity: 0; transform: translateY(-8px); }
+}
+
+.anim-rise { animation: rise-in 560ms var(--ease-out) both; }
+.anim-fade { animation: fade-in 240ms ease-out both; }
+.anim-sheet { animation: sheet-in 420ms var(--ease-out) both; }
+
+/* ボタンを押したときのわずかな沈み込み */
+button,
+a[href] {
+  transition: transform 160ms var(--ease-out), background-color 240ms ease, color 240ms ease, border-color 240ms ease, opacity 240ms ease;
+}
+button:not(:disabled):active,
+a[href]:active {
+  transform: scale(0.97);
+}
+
+/* View Transitions（画面の切り替え・詳細パネルの開閉） */
+.item-panel { view-transition-name: item-panel; }
+.vt-hero { view-transition-name: hero; }
+
+::view-transition-group(*) {
+  animation-duration: 460ms;
+  animation-timing-function: var(--ease-out);
+}
+html[data-vt="route"]::view-transition-old(root) { animation: view-out 200ms ease-in both; }
+html[data-vt="route"]::view-transition-new(root) { animation: view-in 420ms var(--ease-out) 60ms both; }
+::view-transition-new(item-panel) { animation: panel-in 460ms var(--ease-out) both; }
+::view-transition-old(item-panel) { animation: panel-out 280ms ease-in both; }
+::view-transition-old(hero),
+::view-transition-new(hero) {
+  height: 100%;
+  object-fit: cover;
+  overflow: clip;
+}
+
+/* View Transitions 非対応のブラウザでは、パネルをそれだけで滑り込ませる */
+@supports not (view-transition-name: none) {
+  .item-panel { animation: panel-in 420ms var(--ease-out) both; }
 }
 
 /* iOS は 16px 未満の入力欄にフォーカスすると画面を拡大し、そのまま戻らない。 */

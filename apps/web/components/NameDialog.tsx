@@ -23,7 +23,7 @@ export function NameDialog({ title, label, initial = "", submit, onSubmit, onClo
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-40 flex items-end justify-center bg-ink/20 sm:items-center sm:p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-40 anim-fade flex items-end justify-center bg-ink/20 sm:items-center sm:p-6" onClick={onClose}>
       <form
         role="dialog"
         aria-modal="true"
@@ -34,7 +34,7 @@ export function NameDialog({ title, label, initial = "", submit, onSubmit, onClo
           const v = value.trim();
           if (v !== "") onSubmit(v);
         }}
-        className="w-full max-w-md rounded-t-[22px] border border-white/70 bg-glass p-6 backdrop-blur-2xl sm:rounded-[22px]"
+        className="anim-sheet w-full max-w-md rounded-t-[22px] border border-white/70 bg-glass p-6 backdrop-blur-2xl sm:rounded-[22px]"
       >
         <h2 id="name-dialog-title" className="font-display text-3xl font-light tracking-tight">{title}</h2>
         <label htmlFor="name-dialog-input" className="mt-5 block text-xs text-ink-secondary">{label}</label>

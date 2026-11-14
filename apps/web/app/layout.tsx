@@ -1,21 +1,14 @@
 import type { Metadata, Viewport } from "next";
-import { Figtree, Inter, Noto_Sans_JP } from "next/font/google";
 import type { ReactNode } from "react";
+// フォントはビルド時に外部から取得せず、パッケージに含まれるものを使う（CIの失敗を防ぐ）。
+import "@fontsource/figtree/300.css";
+import "@fontsource/figtree/400.css";
+import "@fontsource/inter/400.css";
+import "@fontsource/inter/500.css";
+import "@fontsource/noto-sans-jp/400.css";
+import "@fontsource/noto-sans-jp/500.css";
+import "@fontsource/noto-sans-jp/700.css";
 import "./globals.css";
-
-const display = Figtree({
-  weight: ["300", "400"],
-  subsets: ["latin"],
-  variable: "--font-figtree",
-  display: "swap",
-});
-const sans = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
-const jp = Noto_Sans_JP({
-  weight: ["400", "500", "700"],
-  variable: "--font-noto-sans-jp",
-  display: "swap",
-  preload: false,
-});
 
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 
@@ -35,7 +28,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="ja" className={`${display.variable} ${sans.variable} ${jp.variable}`}>
+    <html lang="ja">
       <body>{children}</body>
     </html>
   );

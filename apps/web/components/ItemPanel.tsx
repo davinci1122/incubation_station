@@ -73,7 +73,7 @@ export function ItemPanel({ item, tags, collections, memberOf, actions, onClose 
   return (
     <aside
       aria-label="アイテム詳細"
-      className="fixed inset-y-0 right-0 z-20 flex w-full max-w-[480px] flex-col gap-6 overflow-y-auto border-l border-white/70 bg-glass px-6 pb-12 pt-4 backdrop-blur-2xl sm:px-8"
+      className="item-panel fixed inset-y-0 right-0 z-20 flex w-full max-w-[480px] flex-col gap-6 overflow-y-auto border-l border-white/70 bg-glass px-6 pb-12 pt-4 backdrop-blur-2xl sm:px-8"
     >
       <button type="button" onClick={onClose} className="min-h-11 cursor-pointer self-end text-sm">
         閉じる
@@ -84,7 +84,7 @@ export function ItemPanel({ item, tags, collections, memberOf, actions, onClose 
         target="_blank"
         rel="noopener noreferrer"
         aria-label={`元サイトを開く: ${shownTitle}`}
-        className="relative block min-h-40 shrink-0 overflow-hidden rounded-[14px] bg-surface"
+        className="vt-hero relative block min-h-40 shrink-0 overflow-hidden rounded-[14px] bg-surface"
       >
         <Orbs seed={id} count={4} scale={1.4} />
         {image && (

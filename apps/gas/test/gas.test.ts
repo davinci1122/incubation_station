@@ -374,6 +374,8 @@ test("代表画像の指定がないページは本文の最初の画像を使�
   const withOg = `<head><meta property="og:image" content="https://cdn.example/og.png"></head><body><img src="x.jpg"></body>`;
   assert.equal(plain(env.ctx.parseMeta_(withOg, "https://a.example/")).image_url, "https://cdn.example/og.png");
   assert.equal(plain(env.ctx.parseMeta_("<body><img src='icon.png'></body>", "https://a.example/")).image_url, "");
+  const ads = `<body><img src="https://tpc.googlesyndication.com/x/ad.jpg" width="300" height="250"><img src="/banners/campaign.jpg"><img data-src="/photos/main.jpg" src="data:image/gif;base64,AA"></body>`;
+  assert.equal(plain(env.ctx.parseMeta_(ads, "https://a.example/")).image_url, "https://a.example/photos/main.jpg");
 });
 
 test("端末で採番したIDで登録できる。不正・重複は拒否する", () => {
@@ -397,4 +399,24 @@ test("items.setTags は端末が取り込める行を返す。コレクション
   assert.equal(added.links.length, 1);
   const removed = env.call("collections.removeItems", { collection_id: cid, item_ids: [item.id] });
   assert.notEqual(removed.links[0].deleted_at, "");
+});
+
+test("JavaScriptで描画するページでも、埋め込みデータから画像を探す", () => {
+  const env = createEnv();
+  const spa = `<html><head><title>About</title><script>window.__DATA__={"logo":"https:\/\/cdn.example\/assets\/logo.png","hero":"https:\/\/cdn.example\/projects\/abc\/hero-photo.jpg?w=1200","ad":"https:\/\/securepubads.g.doubleclick.net\/x.jpg"}</script></head><body><div id="app"></div></body></html>`;
+  assert.equal(plain(env.ctx.parseMeta_(spa, "https://studio.example/design/about")).image_url, "https://cdn.example/projects/abc/hero-photo.jpg?w=1200");
+  const bg = `<body><div style="background-image:url('/img/cover.webp')"></div></body>`;
+  assert.equal(plain(env.ctx.parseMeta_(bg, "https://a.example/x")).image_url, "https://a.example/img/cover.webp");
+});
+
+test("画像が見つからないページはスクリーンショットのURLを使う。オフにもできる", () => {
+  const env = ready();
+  env.pages.set("https://example.com/noimg?utm_source=x", { code: 200, body: "<html><head><title>No image</title></head><body>text</body></html>" });
+  const { item } = env.call("items.create", url("noimg"));
+  const res = env.call("items.fetchMeta", { id: item.id });
+  assert.equal(res.item.image_url, "https://s.wordpress.com/mshots/v1/" + encodeURIComponent("https://example.com/noimg?utm_source=x") + "?w=1200&h=900");
+  env.props.set("SCREENSHOT_SERVICE", "off");
+  env.pages.set("https://example.com/noimg2?utm_source=x", { code: 403 });
+  const b = env.call("items.create", url("noimg2")).item;
+  assert.equal(env.call("items.fetchMeta", { id: b.id }).item.image_url, "");
 });

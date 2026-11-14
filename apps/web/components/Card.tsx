@@ -13,17 +13,19 @@ export function shortDate(iso: string): string {
   return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`;
 }
 
-export function Card({ item, tags, onOpen }: { item: Row; tags: string[]; onOpen: () => void }) {
+export function Card({ item, tags, index = 0, onOpen }: { item: Row; tags: string[]; index?: number; onOpen: () => void }) {
   const [broken, setBroken] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const id = item.id ?? "";
   const title = item.title || item.domain || item.original_url || "";
   const image = !broken && /^https:\/\//i.test(item.image_url ?? "") ? item.image_url : "";
   const status = item.capture_status;
 
   return (
-    <article className="mb-7 break-inside-avoid">
+    <article className="anim-rise mb-7 break-inside-avoid" style={{ animationDelay: `${Math.min(index, 14) * 40}ms` }}>
       <button type="button" onClick={onOpen} className="group block w-full cursor-pointer text-left">
         <div
+          data-media={id}
           className="relative overflow-hidden rounded-[14px] bg-surface"
           style={image ? { minHeight: 120 } : { height: heightFor(id) }}
         >
@@ -36,8 +38,9 @@ export function Card({ item, tags, onOpen }: { item: Row; tags: string[]; onOpen
               loading="lazy"
               decoding="async"
               referrerPolicy="no-referrer"
+              onLoad={() => setLoaded(true)}
               onError={() => setBroken(true)}
-              className="relative block h-auto w-full transition-transform duration-500 group-hover:scale-[1.02]"
+              className={`relative block h-auto w-full transition-[transform,opacity] duration-700 group-hover:scale-[1.02] ${loaded ? "opacity-100" : "opacity-0"}`}
             />
           ) : (
             <span className="absolute inset-x-4 bottom-4 font-display text-[22px] font-light leading-tight tracking-tight">

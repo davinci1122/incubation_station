@@ -3,7 +3,27 @@
 import type { Row } from "@/lib/store";
 import { Orbs } from "./Orbs";
 
-export type CollectionSummary = { row: Row; itemIds: string[]; cover: string };
+/** covers: 表紙に並べるアイテム（先頭から最大4件）。 */
+export type CollectionSummary = { row: Row; itemIds: string[]; covers: { id: string; image: string }[] };
+
+const LAYOUT: Record<number, string[]> = {
+  1: ["col-span-2 row-span-2"],
+  2: ["row-span-2", "row-span-2"],
+  3: ["row-span-2", "", ""],
+  4: ["", "", "", ""],
+};
+
+function Tile({ id, image, span }: { id: string; image: string; span: string }) {
+  return (
+    <div className={`relative overflow-hidden bg-surface ${span}`}>
+      <Orbs seed={id} count={3} scale={0.9} />
+      {image && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={image} alt="" loading="lazy" referrerPolicy="no-referrer" className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 group-hover:scale-[1.04]" onError={(e) => { e.currentTarget.style.display = "none"; }} />
+      )}
+    </div>
+  );
+}
 
 export function CollectionsView({ collections, onOpen, onCreate }: {
   collections: CollectionSummary[];
@@ -29,14 +49,18 @@ export function CollectionsView({ collections, onOpen, onCreate }: {
         </div>
       ) : (
         <ul className="mt-10 grid grid-cols-2 gap-x-4 gap-y-8 sm:grid-cols-[repeat(auto-fill,minmax(240px,1fr))] sm:gap-x-7 sm:gap-y-10">
-          {collections.map(({ row, itemIds, cover }) => (
-            <li key={row.id}>
+          {collections.map(({ row, itemIds, covers }, i) => (
+            <li key={row.id} className="anim-rise" style={{ animationDelay: `${Math.min(i, 12) * 50}ms` }}>
               <button type="button" onClick={() => onOpen(row.id ?? "")} className="group block w-full cursor-pointer text-left">
-                <div className="relative aspect-[4/3] overflow-hidden rounded-[14px] bg-surface">
-                  <Orbs seed={row.id ?? ""} count={4} scale={1.2} />
-                  {cover && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={cover} alt="" loading="lazy" referrerPolicy="no-referrer" className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]" onError={(e) => { e.currentTarget.style.display = "none"; }} />
+                <div data-media={row.id} className="relative aspect-[4/3] overflow-hidden rounded-[14px] bg-surface">
+                  {covers.length === 0 ? (
+                    <Orbs seed={row.id ?? ""} count={4} scale={1.2} />
+                  ) : (
+                    <div className="grid h-full grid-cols-2 grid-rows-2 gap-[3px]">
+                      {covers.map((c, k) => (
+                        <Tile key={c.id} id={c.id} image={c.image} span={LAYOUT[covers.length]?.[k] ?? ""} />
+                      ))}
+                    </div>
                   )}
                 </div>
                 <p className="mt-3 font-display text-xl font-light leading-tight tracking-tight sm:text-2xl">{row.name}</p>
@@ -59,11 +83,11 @@ export function TagsView({ tags, onOpen }: { tags: { name: string; count: number
         <p className="mt-16 text-sm text-ink-secondary">アイテムの詳細からタグを付けると、ここに並びます。</p>
       ) : (
         <ul className="mt-10 flex flex-wrap gap-2.5">
-          {tags.map((t) => (
-            <li key={t.name}>
-              <button type="button" onClick={() => onOpen(t.name)} className="flex min-h-11 cursor-pointer items-baseline gap-2 rounded-full border border-line bg-white/50 px-4 text-sm backdrop-blur">
+          {tags.map((t, i) => (
+            <li key={t.name} className="anim-rise" style={{ animationDelay: `${Math.min(i, 20) * 25}ms` }}>
+              <button type="button" onClick={() => onOpen(t.name)} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-full border border-white/80 bg-white/75 py-0 pl-4 pr-3 text-sm leading-none shadow-[0_1px_0_rgba(30,30,30,0.04)] backdrop-blur-xl">
                 <span>{t.name}</span>
-                <span className="text-xs text-ink-secondary">{t.count}</span>
+                <span className="flex h-6 min-w-6 items-center justify-center rounded-full bg-accent-light px-1.5 text-[11px] tabular-nums text-ink-secondary">{t.count}</span>
               </button>
             </li>
           ))}

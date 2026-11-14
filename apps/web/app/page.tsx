@@ -1,7 +1,7 @@
 "use client";
 
 import { displayDomain, normalizeUrl } from "@cabinet/url";
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { AddUrl } from "@/components/AddUrl";
 import { Card } from "@/components/Card";
 import { CollectionsView, TagsView, type CollectionSummary } from "@/components/Collections";
@@ -12,6 +12,7 @@ import { Orbs } from "@/components/Orbs";
 import { ApiError } from "@/lib/api";
 import { getToken, signOut, subscribeToken } from "@/lib/google";
 import { createCollection, createItem, deleteCollection, deleteItem, refetchItem, setItemTags, toggleCollection, updateCollection, updateItem } from "@/lib/mutate";
+import { closeTransition, openTransition, routeTransition } from "@/lib/transition";
 import { HOME, readRoute, routeHref, type HomeRoute, type Route, type Sort } from "@/lib/route";
 import { clearLocal, getSnapshot, restore, subscribe, sync, type Row, type Snapshot } from "@/lib/store";
 
@@ -31,6 +32,8 @@ export default function HomePage() {
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
+  const openRef = useRef<string | null>(null);
+  openRef.current = openId;
   const [notice, setNotice] = useState("");
   const [route, setRoute] = useState<Route>(HOME);
   const [dialog, setDialog] = useState<null | { kind: "new"; itemId?: string } | { kind: "rename"; id: string; name: string }>(null);
@@ -104,8 +107,11 @@ export default function HomePage() {
         const itemIds = (links.get(row.id ?? "") ?? [])
           .sort((a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0))
           .map((l) => l.item_id ?? "");
-        const cover = itemIds.map((id) => alive.get(id)?.image_url ?? "").find((u) => /^https:\/\//i.test(u)) ?? "";
-        return { row, itemIds, cover };
+        const withImage = (id: string) => /^https:\/\//i.test(alive.get(id)?.image_url ?? "");
+        // 画像のあるアイテムを優先して、最大4件を表紙に使う。
+        const picked = [...itemIds.filter(withImage), ...itemIds.filter((id) => !withImage(id))].slice(0, 4);
+        const covers = picked.map((id) => ({ id, image: withImage(id) ? (alive.get(id)?.image_url ?? "") : "" }));
+        return { row, itemIds, covers };
       });
   }, [data.tables.collections, data.tables.collection_items, liveItems]);
 
@@ -151,34 +157,48 @@ export default function HomePage() {
 
   // 詳細パネルの開閉をブラウザの履歴に載せ、「戻る」で閉じられるようにする。
   useEffect(() => {
-    const read = () => {
+    const apply = () => {
       const m = /^#item=([0-9a-f-]{36})$/.exec(window.location.hash);
       setOpenId(m ? (m[1] ?? null) : null);
       setRoute(readRoute());
     };
-    read();
+    apply();
+    const read = () => {
+      const m = /^#item=([0-9a-f-]{36})$/.exec(window.location.hash);
+      const nextId = m ? (m[1] ?? null) : null;
+      const prevId = openRef.current;
+      if (prevId && !nextId) closeTransition(prevId, apply);
+      else if (nextId && !prevId) openTransition(nextId, apply);
+      else routeTransition(apply);
+    };
     window.addEventListener("popstate", read);
     return () => window.removeEventListener("popstate", read);
   }, []);
 
   const openItem = useCallback((id: string) => {
     const target = `#item=${id}`;
-    if (window.location.hash.startsWith("#item=")) window.history.replaceState(null, "", target);
-    else window.history.pushState(null, "", target);
-    setOpenId(id);
+    if (window.location.hash.startsWith("#item=")) {
+      window.history.replaceState(null, "", target);
+      setOpenId(id);
+    } else {
+      window.history.pushState(null, "", target);
+      openTransition(id, () => setOpenId(id));
+    }
   }, []);
 
   const closeItem = useCallback(() => {
     if (window.location.hash.startsWith("#item=")) window.history.back();
-    else setOpenId(null);
+    else if (openRef.current) closeTransition(openRef.current, () => setOpenId(null));
   }, []);
 
   const go = useCallback((next: Route) => {
     window.history.pushState(null, "", routeHref(next));
-    setRoute(next);
-    setOpenId(null);
-    setConfirmDelete(false);
-    window.scrollTo({ top: 0 });
+    routeTransition(() => {
+      setRoute(next);
+      setOpenId(null);
+      setConfirmDelete(false);
+      window.scrollTo({ top: 0 });
+    });
   }, []);
 
   const addUrl = (input: string) => {
@@ -357,8 +377,8 @@ export default function HomePage() {
 
           {showGrid && (items.length > 0 ? (
             <div className="mt-9 columns-2 gap-4 sm:gap-6 md:columns-3 xl:columns-4 2xl:columns-5">
-              {items.map((item) => (
-                <Card key={item.id} item={item} tags={tagsByItem.get(item.id ?? "") ?? []} onOpen={() => openItem(item.id ?? "")} />
+              {items.map((item, i) => (
+                <Card key={item.id} index={i} item={item} tags={tagsByItem.get(item.id ?? "") ?? []} onOpen={() => openItem(item.id ?? "")} />
               ))}
             </div>
           ) : (

@@ -21,7 +21,7 @@ export function AddUrl({ busy, error, onSubmit, onClose }: {
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-30 flex items-end justify-center bg-ink/20 p-0 sm:items-center sm:p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-30 anim-fade flex items-end justify-center bg-ink/20 p-0 sm:items-center sm:p-6" onClick={onClose}>
       <form
         role="dialog"
         aria-modal="true"
@@ -31,7 +31,7 @@ export function AddUrl({ busy, error, onSubmit, onClose }: {
           e.preventDefault();
           if (!busy && value.trim() !== "") onSubmit(value.trim());
         }}
-        className="w-full max-w-lg rounded-t-[22px] border border-white/70 bg-glass p-6 backdrop-blur-2xl sm:rounded-[22px]"
+        className="anim-sheet w-full max-w-lg rounded-t-[22px] border border-white/70 bg-glass p-6 backdrop-blur-2xl sm:rounded-[22px]"
       >
         <h2 id="add-url-title" className="font-display text-3xl font-light tracking-tight">
           URLを保存
