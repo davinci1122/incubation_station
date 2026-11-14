@@ -593,6 +593,9 @@ test("手動の画像: 保存して公開し、自動取得では上書きしな
   env.drive.denySharing = true;
   assert.equal(code(() => env.call("items.setImage", { id: item.id, mime: "image/jpeg", data })), "SHARE_FAILED");
   assert.equal([...env.drive.files.values()].filter((f) => !f.trashed).length, 1);
+  env.drive.denySharing = false;
+  env.drive.denyAccess = true;
+  assert.equal(code(() => env.call("items.setImage", { id: item.id, mime: "image/jpeg", data })), "DRIVE_DENIED");
 });
 
 test("保守: 30日を過ぎたゴミ箱を消し、関連行も消す。新しい削除は残す", () => {

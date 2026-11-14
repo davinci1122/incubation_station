@@ -24,34 +24,23 @@ const listeners = new Set<() => void>();
 let token: string | null = null;
 let loading: Promise<GoogleId> | null = null;
 
-function expiry(jwt: string): number {
-  try {
-    const payload = jwt.split(".")[1] ?? "";
-    const json = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
-    return Number((JSON.parse(json) as { exp?: number }).exp ?? 0) * 1000;
-  } catch {
-    return 0;
-  }
-}
-
-/** 有効なIDトークン。期限まで1分を切ったものは無効として扱う。 */
+/** 保存してあるIDトークン。期限切れかどうかは、送信時にサーバーが判断する（切れていれば renewToken で取り直す）。 */
 export function getToken(): string | null {
   if (token === null && typeof window !== "undefined") {
     try {
-      token = window.sessionStorage.getItem(KEY);
+      token = window.localStorage.getItem(KEY);
     } catch {
       token = null;
     }
   }
-  if (token !== null && expiry(token) - Date.now() < 60_000) setToken(null);
   return token;
 }
 
 export function setToken(next: string | null): void {
   token = next;
   try {
-    if (next === null) window.sessionStorage.removeItem(KEY);
-    else window.sessionStorage.setItem(KEY, next);
+    if (next === null) window.localStorage.removeItem(KEY);
+    else window.localStorage.setItem(KEY, next);
   } catch {
     // 保存できなくてもメモリ上の値で動く
   }
@@ -91,6 +80,41 @@ export function loadGoogle(): Promise<GoogleId> {
     document.head.appendChild(script);
   });
   return loading;
+}
+
+let renewing: Promise<boolean> | null = null;
+
+/**
+ * 期限切れなどのとき、Googleに確認して新しいIDトークンを取る。
+ * ブラウザが許せば画面を出さずに済む。取れなければ false（そのときはログイン画面になる）。
+ */
+export function renewToken(): Promise<boolean> {
+  if (renewing) return renewing;
+  renewing = (async () => {
+    try {
+      const id = await loadGoogle();
+      return await new Promise<boolean>((resolve) => {
+        let unsubscribe = (): void => {};
+        const timer = window.setTimeout(() => {
+          unsubscribe();
+          resolve(false);
+        }, 8000);
+        unsubscribe = subscribeToken(() => {
+          if (getToken()) {
+            window.clearTimeout(timer);
+            unsubscribe();
+            resolve(true);
+          }
+        });
+        id.prompt();
+      });
+    } catch {
+      return false;
+    } finally {
+      renewing = null;
+    }
+  })();
+  return renewing;
 }
 
 export async function signOut(): Promise<void> {
