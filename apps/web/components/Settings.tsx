@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { Row } from "@/lib/store";
 import { shortDate } from "./Card";
+import { AiCuration } from "./AiCuration";
 
 const H2 = "font-display text-2xl font-light tracking-tight";
 const BTN = "min-h-11 cursor-pointer rounded-[22px] border border-line bg-white/50 px-4 text-sm";
@@ -50,6 +51,8 @@ export function SettingsView({ appUrl, trash, onRestore, onExport, onLogout }: {
             </div>
           </dl>
         </div>
+
+        <AiCuration />
 
         <div>
           <h2 className={H2}>エクスポート</h2>

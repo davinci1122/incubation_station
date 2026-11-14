@@ -534,6 +534,44 @@ test("AIで整理: 月の上限を超える場合は呼び出さない。APIエ�
   assert.match(env.alerts.at(-1)!, /APIキーが未設定/);
 });
 
+test("AIで整理（アプリ）: バッチごとに提案を返し、選んだものだけ反映する。同じアイテムは繰り返さない", () => {
+  const env = ready();
+  env.props.set("AI_API_KEY", "key");
+  const a = env.call("items.create", { ...url("app1"), title: "Concrete libraries" }).item;
+  const b = env.call("items.create", { ...url("app2"), title: "Type specimen", tags: ["typography"] }).item;
+  env.call("items.update", { id: b.id, version: b.version, patch: { summary: "済み" } });
+  const est = env.call("ai.estimate", {});
+  assert.equal(est.count, 1);
+  assert.equal(est.hasKey, true);
+
+  env.ai.handler = () => aiReply([{ id: a.id, tags: ["Architecture", "typography"], summary: "図書館建築の調査。" }]);
+  const first = env.call("ai.curate", { exclude: [] });
+  assert.deepEqual(first.processed, [a.id]);
+  assert.equal(first.suggestions.length, 1);
+  assert.equal(first.remaining, 0);
+  assert.equal(env.call("sync.pull", {}).tables.items.find((i: any) => i.id === a.id).summary, "");
+
+  const again = env.call("ai.curate", { exclude: first.processed });
+  assert.equal(again.processed.length, 0);
+  assert.equal(env.ai.calls, 1);
+
+  env.call("ai.apply", { suggestions: [{ id: a.id, tags: ["Architecture", "typography", "=evil()"], summary: "図書館建築の調査。" }] });
+  const synced = env.call("sync.pull", {});
+  const applied = synced.tables.items.find((i: any) => i.id === a.id);
+  assert.equal(applied.summary, "図書館建築の調査。");
+  const names = synced.tables.tags.filter((t: any) => t.deleted_at === "").map((t: any) => t.name);
+  assert.ok(names.includes("Architecture") && names.includes("typography"));
+});
+
+test("AIで整理（アプリ）: APIキーがなければ呼ばず、理由を返す", () => {
+  const env = ready();
+  env.call("items.create", { ...url("app3"), title: "A" });
+  env.props.delete("AI_API_KEY");
+  assert.equal(env.call("ai.estimate", {}).hasKey, false);
+  assert.equal(code(() => env.call("ai.curate", { exclude: [] })), "AI_NOT_CONFIGURED");
+  assert.equal(env.ai.calls, 0);
+});
+
 test("保守: 30日を過ぎたゴミ箱を消し、関連行も消す。新しい削除は残す", () => {
   const env = ready();
   const keep = env.call("items.create", { ...url("p-keep"), tags: ["t"] }).item;
