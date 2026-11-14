@@ -35,7 +35,13 @@ function itemsSetImage_(db, user, p) {
   if (data === "" || data.length > IMAGE_MAX_BASE64) throw err_("TOO_LARGE", "画像が大きすぎます。");
 
   var blob = Utilities.newBlob(Utilities.base64Decode(data), mime, item.id + "." + IMAGE_EXT[mime]);
-  var file = imageFolder_().createFile(blob);
+  var file;
+  try {
+    file = imageFolder_().createFile(blob);
+  } catch (e) {
+    // 権限を承認していないと DriveApp が失敗する。原因をそのまま伝える。
+    throw err_("DRIVE_DENIED", "画像を保存できませんでした。Apps Scriptエディタで setup を実行し、Googleドライブへのアクセスを許可してください。");
+  }
   try {
     file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
   } catch (e) {

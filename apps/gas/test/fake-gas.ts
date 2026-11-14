@@ -101,7 +101,7 @@ export type Env = {
   tokens: Map<string, { code: number; body: unknown }>; fetchCount: { n: number }; activeEmail: { value: string };
   alerts: string[]; pages: Map<string, { code: number; headers?: Record<string, string>; body?: string; throws?: string }>;
   triggers: string[]; menus: { n: number }; ai: { handler: null | ((body: any) => { code: number; body: unknown }); calls: number };
-  drive: { files: Map<string, { name: string; mime: string; shared: boolean; trashed: boolean }>; folders: Map<string, string>; denySharing: boolean };
+  drive: { files: Map<string, { name: string; mime: string; shared: boolean; trashed: boolean }>; folders: Map<string, string>; denySharing: boolean; denyAccess: boolean };
 };
 
 export function createEnv(): Env {
@@ -110,7 +110,7 @@ export function createEnv(): Env {
   const cache = new Map<string, string>();
   const tokens = new Map<string, { code: number; body: unknown }>();
   const fetchCount = { n: 0 };
-  const drive = { files: new Map<string, { name: string; mime: string; shared: boolean; trashed: boolean }>(), folders: new Map<string, string>(), denySharing: false };
+  const drive = { files: new Map<string, { name: string; mime: string; shared: boolean; trashed: boolean }>(), folders: new Map<string, string>(), denySharing: false, denyAccess: false };
   const activeEmail = { value: "owner@example.com" };
   const alerts: string[] = [];
   const pages: Env["pages"] = new Map();
@@ -169,8 +169,8 @@ export function createEnv(): Env {
     },
     DriveApp: {
       Access: { ANYONE_WITH_LINK: "ANYONE_WITH_LINK" }, Permission: { VIEW: "VIEW" },
-      createFolder: (name: string) => { const id = randomUUID(); drive.folders.set(id, name); return folderObj(id); },
-      getFolderById: (id: string) => { if (!drive.folders.has(id)) throw new Error("not found"); return folderObj(id); },
+      createFolder: (name: string) => { if (drive.denyAccess) throw new Error("permission"); const id = randomUUID(); drive.folders.set(id, name); return folderObj(id); },
+      getFolderById: (id: string) => { if (drive.denyAccess || !drive.folders.has(id)) throw new Error("permission"); return folderObj(id); },
       getFileById: (id: string) => { const f = drive.files.get(id); if (!f) throw new Error("not found"); return { setTrashed: () => { f.trashed = true; } }; },
     },
     ContentService: {
