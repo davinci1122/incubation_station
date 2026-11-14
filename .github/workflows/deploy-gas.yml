@@ -38,8 +38,10 @@ jobs:
           CLASPRC_JSON: ${{ secrets.CLASP_TOKEN || secrets.CLASPRC_JSON }}
           SCRIPT: ${{ secrets.GAS_SCRIPT_ID || secrets.CLASP_JSON }}
         run: |
+          [ -z "$CLASPRC_JSON" ] && echo "::warning::Secret CLASP_TOKEN が見つかりません。"
+          [ -z "$SCRIPT" ] && echo "::warning::Secret GAS_SCRIPT_ID が見つかりません。"
           if [ -z "$CLASPRC_JSON" ] || [ -z "$SCRIPT" ]; then
-            echo "::notice::CLASP_TOKEN と GAS_SCRIPT_ID が未設定のため、GAS の反映をスキップしました。"
+            echo "::notice::GAS の反映をスキップしました。"
             echo "ready=false" >> "$GITHUB_OUTPUT"
           else
             echo "ready=true" >> "$GITHUB_OUTPUT"
