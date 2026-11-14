@@ -1,12 +1,12 @@
 import type { Metadata, Viewport } from "next";
-import { Instrument_Serif, Inter, Noto_Sans_JP } from "next/font/google";
+import { Figtree, Inter, Noto_Sans_JP } from "next/font/google";
 import type { ReactNode } from "react";
 import "./globals.css";
 
-const serif = Instrument_Serif({
-  weight: "400",
+const display = Figtree({
+  weight: ["300", "400"],
   subsets: ["latin"],
-  variable: "--font-instrument-serif",
+  variable: "--font-figtree",
   display: "swap",
 });
 const sans = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
@@ -27,7 +27,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#f5f3ed",
+  themeColor: "#fbf0ec",
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
@@ -35,7 +35,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="ja" className={`${serif.variable} ${sans.variable} ${jp.variable}`}>
+    <html lang="ja" className={`${display.variable} ${sans.variable} ${jp.variable}`}>
       <body>{children}</body>
     </html>
   );

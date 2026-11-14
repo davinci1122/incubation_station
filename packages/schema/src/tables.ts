@@ -12,7 +12,7 @@ const table = <const C extends readonly string[]>(key: readonly string[], column
 export const TABLES = {
   items: table(["id"], [
     "id", "user_id", "original_url", "normalized_url", "url_hash", "title", "description",
-    "domain", "content_type", "excerpt", "lang", "published_at", "favicon_file_id",
+    "domain", "content_type", "excerpt", "summary", "lang", "published_at", "favicon_file_id",
     "thumbnail_file_id", "og_image_file_id", "thumb_width", "thumb_height", "thumb_color",
     "article_file_id", "latest_capture_id", "capture_status", "user_note", "is_favorite",
     "created_at", "updated_at",

@@ -1,32 +1,48 @@
 @import "tailwindcss";
 
 /*
- * デザイントークン（仕様 6.2）。色は意味ベースの変数で持ち、
+ * デザイントークン（設計書 12章以降の改訂版）。色は意味ベースの変数で持ち、
  * ダークモードは [data-theme="dark"] で値を差し替えるだけで追加できる。
  */
 :root {
-  --cab-bg: #f5f3ed;
-  --cab-surface: #ffffff;
-  --cab-text: #20211d;
-  --cab-text-secondary: #77786f;
-  --cab-accent: #777b5b;
-  --cab-accent-light: #e8e8dc;
-  --cab-border: #e5e2d9;
-  --cab-muted: #b7b5aa;
+  --cab-bg: #fbf0ec;
+  --cab-surface: #fff9f6;
+  --cab-glass: rgba(255, 250, 248, 0.72);
+  --cab-text: #1e1e1e;
+  --cab-text-secondary: #6b6460;
+  --cab-accent-light: #f3e4de;
+  --cab-border: #efe0da;
+  --cab-muted: #cdbfb9;
+  --cab-danger: #8a2b1d;
+
+  /* ぼかした球に使う色。画像の下地・画像なしカード・背景に使う。 */
+  --orb-violet: #5b6cff;
+  --orb-rose: #e4476b;
+  --orb-amber: #f4b24a;
+  --orb-lime: #b9d94a;
+  --orb-sky: #3d8fd9;
+  --orb-teal: #0e2a2e;
+  --orb-wine: #8e0f3c;
+  --orb-mint: #7ff0b8;
+  --orb-pink: #f3a6e8;
 }
 
 @theme inline {
   --color-bg: var(--cab-bg);
   --color-surface: var(--cab-surface);
+  --color-glass: var(--cab-glass);
   --color-ink: var(--cab-text);
   --color-ink-secondary: var(--cab-text-secondary);
-  --color-accent: var(--cab-accent);
   --color-accent-light: var(--cab-accent-light);
   --color-line: var(--cab-border);
   --color-muted: var(--cab-muted);
+  --color-danger: var(--cab-danger);
 
-  --font-serif: var(--font-instrument-serif), "Cormorant Garamond", Georgia, serif;
+  --font-display: var(--font-figtree), var(--font-noto-sans-jp), system-ui, sans-serif;
   --font-sans: var(--font-inter), var(--font-noto-sans-jp), system-ui, sans-serif;
+
+  --radius-card: 14px;
+  --radius-control: 22px;
 }
 
 html {
@@ -47,7 +63,7 @@ body {
 }
 
 :focus-visible {
-  outline: 2px solid var(--cab-accent);
+  outline: 2px solid var(--cab-text);
   outline-offset: 2px;
 }
 
