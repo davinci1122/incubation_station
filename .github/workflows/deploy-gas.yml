@@ -1,0 +1,92 @@
+name: Deploy GAS
+
+# apps/gas が変わったら、テスト → Apps Script へ反映 → 既存のウェブアプリを新バージョンに更新する。
+# 必要な Secrets（Google 公式の CI/CD ガイドと同じ名前）:
+#   CLASPRC_JSON … clasp login で作られた ~/.clasprc.json の中身
+#   CLASP_JSON   … .clasp.json の中身（scriptId を含む）
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/gas/**"
+      - ".github/workflows/deploy-gas.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-gas
+  cancel-in-progress: false
+
+env:
+  # ウェブアプリのURL（/macros/s/<ID>/exec）に含まれるデプロイID。公開済みの値。
+  GAS_DEPLOYMENT_ID: AKfycbwWPn0aLjpncvus3WITf1OouwQ6aZCHlmliWwmcjT8xA4cQweXOEFfMZsnnXV9VALYu
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Check secrets
+        id: secrets
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          CLASP_JSON: ${{ secrets.CLASP_JSON }}
+        run: |
+          if [ -z "$CLASPRC_JSON" ] || [ -z "$CLASP_JSON" ]; then
+            echo "::notice::CLASPRC_JSON / CLASP_JSON が未設定のため、GAS の反映をスキップしました。"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Test
+        run: node --test "apps/gas/test/**/*.test.ts"
+
+      - name: Build
+        if: steps.secrets.outputs.ready == 'true'
+        run: |
+          node apps/gas/build.mjs
+          mkdir -p "$RUNNER_TEMP/gas/out"
+          cp apps/gas/dist/Code.gs "$RUNNER_TEMP/gas/out/Code.gs"
+          cp apps/gas/appsscript.json "$RUNNER_TEMP/gas/out/appsscript.json"
+
+      - name: Write credentials
+        if: steps.secrets.outputs.ready == 'true'
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          CLASP_JSON: ${{ secrets.CLASP_JSON }}
+        run: |
+          umask 077
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          # rootDir は手元のパスが入っていることがあるので、ここで書き換える。
+          printf '%s' "$CLASP_JSON" | node -e '
+            let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
+              const c = JSON.parse(s);
+              if (!c.scriptId) { console.error("CLASP_JSON に scriptId がありません"); process.exit(1); }
+              c.rootDir = "out";
+              delete c.filePushOrder;
+              require("fs").writeFileSync(process.argv[1], JSON.stringify(c));
+            });' "$RUNNER_TEMP/gas/.clasp.json"
+          # ログイン時の clasp のバージョンに合わせる（v3 は tokens キーを持つ）。
+          if node -e 'process.exit(JSON.parse(require("fs").readFileSync(process.env.HOME + "/.clasprc.json", "utf8")).tokens ? 0 : 1)'; then
+            echo "CLASP=@google/clasp@3" >> "$GITHUB_ENV"
+          else
+            echo "CLASP=@google/clasp@2.4.2" >> "$GITHUB_ENV"
+          fi
+
+      - name: Push and deploy
+        if: steps.secrets.outputs.ready == 'true'
+        working-directory: ${{ runner.temp }}/gas
+        run: |
+          npx --yes "$CLASP" push --force
+          npx --yes "$CLASP" deploy --deploymentId "$GAS_DEPLOYMENT_ID" --description "${GITHUB_SHA::7} $(date -u +%Y-%m-%dT%H:%MZ)"
+
+      - name: Clean up
+        if: always()
+        run: rm -f "$HOME/.clasprc.json" "$RUNNER_TEMP/gas/.clasp.json"

@@ -21,3 +21,10 @@ Google Sheets を正とするデータAPI（Google Apps Script）。スプレッ
 | `OAUTH_CLIENT_ID` | ウェブアプリのログインに使う OAuth クライアントID（P2で設定） |
 
 値はリポジトリに書かないでください。
+
+## 自動反映
+
+`main` に `apps/gas` の変更が入ると、GitHub Actions（`deploy-gas.yml`）がテスト後に Apps Script へ反映し、
+既存のウェブアプリを新バージョンに更新します。Secrets に `CLASPRC_JSON` と `CLASP_JSON` が必要です。
+
+権限（`appsscript.json` の `oauthScopes`）を変えた場合だけ、エディタで `setup` を1回実行して承認し直してください。
