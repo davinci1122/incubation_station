@@ -383,3 +383,18 @@ test("端末で採番したIDで登録できる。不正・重複は拒否する
   assert.equal(code(() => env.call("items.create", { ...url("cid2"), id })), "DUPLICATE");
   assert.equal(code(() => env.call("items.create", { ...url("cid3"), id: "=1+1" })), "INVALID");
 });
+
+test("items.setTags は端末が取り込める行を返す。コレクションも同様", () => {
+  const env = ready();
+  const { item } = env.call("items.create", url("rows"));
+  const res = env.call("items.setTags", { id: item.id, tags: ["A", "b"] });
+  assert.deepEqual(res.tags, ["A", "b"]);
+  assert.deepEqual(res.rows.tags.map((t: any) => t.name).sort(), ["A", "b"]);
+  assert.equal(res.rows.item_tags.filter((l: any) => l.deleted_at === "").length, 2);
+  const cid = "1b9d4c0e-6f0a-4f2b-9a53-1c2d3e4f5a6b";
+  assert.equal(env.call("collections.create", { id: cid, name: "Ideas" }).collection.id, cid);
+  const added = env.call("collections.addItems", { collection_id: cid, item_ids: [item.id] });
+  assert.equal(added.links.length, 1);
+  const removed = env.call("collections.removeItems", { collection_id: cid, item_ids: [item.id] });
+  assert.notEqual(removed.links[0].deleted_at, "");
+});

@@ -101,6 +101,15 @@ function cleanTagName_(name) {
   return String(name === null || name === undefined ? "" : name).replace(/[\s　]+/g, " ").trim();
 }
 
+/** 端末で採番したID（UUID）を検証する。空なら空文字。 */
+function clientId_(db, table, value) {
+  var id = String(value || "").toLowerCase();
+  if (id === "") return "";
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)) throw err_("INVALID", "IDの形式が正しくありません。");
+  if (db.table(table).rows.some(function (r) { return r.id === id; })) throw err_("DUPLICATE", "同じIDの行があります。");
+  return id;
+}
+
 function tagKey_(name) {
   return cleanTagName_(name).toLowerCase();
 }
@@ -286,7 +295,7 @@ function handle_(db, user, action, params) {
     case "items.delete": return softDelete_(db, user, "items", p, true);
     case "items.restore": return itemsRestore_(db, user, p);
     case "items.refetch": return itemsRefetch_(db, user, p);
-    case "items.setTags": return { item_id: p.id, tags: setItemTags_(db, user, p.id, p.tags) };
+    case "items.setTags": return itemsSetTags_(db, user, p);
     case "tags.update": return tagsUpdate_(db, user, p);
     case "tags.delete": return tagsDelete_(db, user, p);
     case "tags.merge": return tagsMerge_(db, user, p);
@@ -357,11 +366,7 @@ function itemsCreate_(db, user, p) {
 
   if (!item) {
     // 端末側で採番したIDを受け取ると、応答を待たずにカードを表示できる。
-    var newId = String(p.id || "").toLowerCase();
-    if (newId !== "") {
-      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(newId)) throw err_("INVALID", "IDの形式が正しくありません。");
-      if (db.table("items").rows.some(function (r) { return r.id === newId; })) throw err_("DUPLICATE", "同じIDのアイテムがあります。");
-    }
+    var newId = clientId_(db, "items", p.id);
     item = db.insert("items", {
       id: newId || Utilities.getUuid(), user_id: user.id, original_url: original, normalized_url: normalized,
       url_hash: hash, title: str_(p.title, LIMITS.title, "タイトル"), domain: domainOf_(normalized),
@@ -458,6 +463,16 @@ function setItemTags_(db, user, itemId, names) {
   return order.map(function (t) { return t.name; });
 }
 
+/** タグを付け替え、端末がそのまま取り込める行（tags / item_tags）を返す。 */
+function itemsSetTags_(db, user, p) {
+  var names = setItemTags_(db, user, p.id, p.tags);
+  var keys = {};
+  names.forEach(function (n) { keys[tagKey_(n)] = true; });
+  var tags = db.live("tags", user.id).filter(function (t) { return keys[tagKey_(t.name)]; });
+  var links = db.table("item_tags").rows.filter(function (l) { return l.item_id === String(p.id) && l.user_id === user.id; });
+  return { item_id: p.id, tags: names, rows: { tags: tags.map(publicRow_), item_tags: links.map(publicRow_) } };
+}
+
 function tagsUpdate_(db, user, p) {
   var tag = ownLive_(db, user, "tags", p.id);
   db.checkVersion("tags", tag, p.version);
@@ -524,7 +539,7 @@ function collectionsCreate_(db, user, p) {
   var max = 0;
   db.live("collections", user.id).forEach(function (c) { max = Math.max(max, Number(c.sort_order || 0)); });
   var row = db.insert("collections", {
-    id: Utilities.getUuid(), user_id: user.id, name: name,
+    id: clientId_(db, "collections", p.id) || Utilities.getUuid(), user_id: user.id, name: name,
     description: str_(p.description, LIMITS.description, "説明"), sort_order: String(max + 1),
     created_at: now, updated_at: now
   });
@@ -583,7 +598,7 @@ function collectionsAddItems_(db, user, p) {
     else byItem[item.id] = db.insert("collection_items", { collection_id: c.id, item_id: item.id, user_id: user.id, sort_order: String(max), added_at: now });
     added++;
   });
-  return { collection_id: c.id, added: added };
+  return { collection_id: c.id, added: added, links: collectionLinks_(db, user, c.id).map(publicRow_) };
 }
 
 function collectionsRemoveItems_(db, user, p) {
@@ -595,7 +610,7 @@ function collectionsRemoveItems_(db, user, p) {
   collectionLinks_(db, user, c.id).forEach(function (l) {
     if (remove[l.item_id] && l.deleted_at === "") { db.update("collection_items", l, { deleted_at: now }); removed++; }
   });
-  return { collection_id: c.id, removed: removed };
+  return { collection_id: c.id, removed: removed, links: collectionLinks_(db, user, c.id).map(publicRow_) };
 }
 
 /** item_ids の順に並べ替える。指定されなかったアイテムは後ろに元の順で残す。 */

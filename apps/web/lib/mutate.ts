@@ -1,5 +1,5 @@
 import { call } from "./api";
-import { getRow, sync, upsert, type Row } from "./store";
+import { getRow, setTagOverride, sync, upsert, type Row } from "./store";
 
 // 変更は1本の列に並べて順番に送る。画面には送信前に反映する（楽観的更新）。
 let chain: Promise<unknown> = Promise.resolve();
@@ -51,10 +51,91 @@ export function deleteItem(id: string): Promise<void> {
   });
 }
 
+/** タグを付け替える。画面には即座に出し、応答の行で置き換える。 */
 export function setItemTags(id: string, tags: string[]): Promise<void> {
+  const seen = new Set<string>();
+  const names = tags.map((t) => t.replace(/\s+/g, " ").trim()).filter((t) => {
+    const key = t.toLowerCase();
+    if (t === "" || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  setTagOverride(id, names);
   return enqueue(async () => {
-    await call("items.setTags", { id, tags });
-    await sync();
+    try {
+      const res = await call<{ rows: { tags: Row[]; item_tags: Row[] } }>("items.setTags", { id, tags: names });
+      upsert(res.rows);
+    } catch (e) {
+      await sync().catch(() => undefined);
+      throw e;
+    } finally {
+      setTagOverride(id, null);
+    }
+  });
+}
+
+// ---------- コレクション ----------
+
+export function createCollection(name: string, withItemId?: string): string {
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  upsert({
+    collections: [{ id, name, description: "", cover_image_file_id: "", sort_order: String(Date.now()), created_at: now, updated_at: now, deleted_at: "", version: "1" }],
+  });
+  void enqueue(async () => {
+    const res = await call<{ collection: Row }>("collections.create", { id, name });
+    upsert({ collections: [res.collection] });
+  }).catch(() => sync().catch(() => undefined));
+  if (withItemId) void toggleCollection(withItemId, id, true).catch(() => undefined);
+  return id;
+}
+
+export function toggleCollection(itemId: string, collectionId: string, on: boolean): Promise<void> {
+  const now = new Date().toISOString();
+  const existing = getRow("collection_items", `${collectionId}|${itemId}`);
+  upsert({
+    collection_items: [{
+      collection_id: collectionId, item_id: itemId, sort_order: existing?.sort_order ?? String(Date.now()),
+      added_at: on ? now : (existing?.added_at ?? now), version: existing?.version ?? "1", deleted_at: on ? "" : now,
+    }],
+  });
+  return enqueue(async () => {
+    try {
+      const res = await call<{ links: Row[] }>(on ? "collections.addItems" : "collections.removeItems", { collection_id: collectionId, item_ids: [itemId] });
+      upsert({ collection_items: res.links });
+    } catch (e) {
+      await sync().catch(() => undefined);
+      throw e;
+    }
+  });
+}
+
+export function updateCollection(id: string, patch: Record<string, string>): Promise<void> {
+  const current = getRow("collections", id);
+  if (current) upsert({ collections: [{ ...current, ...patch }] });
+  return enqueue(async () => {
+    try {
+      const latest = getRow("collections", id);
+      const res = await call<{ collection: Row }>("collections.update", { id, version: latest?.version, patch });
+      upsert({ collections: [res.collection] });
+    } catch (e) {
+      await sync().catch(() => undefined);
+      throw e;
+    }
+  });
+}
+
+export function deleteCollection(id: string): Promise<void> {
+  const current = getRow("collections", id);
+  if (current) upsert({ collections: [{ ...current, deleted_at: new Date().toISOString() }] });
+  return enqueue(async () => {
+    try {
+      await call("collections.delete", { id });
+      await sync();
+    } catch (e) {
+      await sync().catch(() => undefined);
+      throw e;
+    }
   });
 }
 

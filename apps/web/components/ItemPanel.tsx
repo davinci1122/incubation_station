@@ -10,6 +10,8 @@ export type ItemActions = {
   setTags: (id: string, tags: string[]) => Promise<void>;
   refetch: (id: string) => Promise<void>;
   remove: (id: string) => Promise<void>;
+  toggleCollection: (itemId: string, collectionId: string, on: boolean) => Promise<void>;
+  newCollection: (itemId: string) => void;
 };
 
 const LABEL = "block text-[11px] uppercase tracking-[0.14em] text-ink-secondary";
@@ -25,9 +27,11 @@ function waybackUrl(url: string, savedAt: string): string {
   return `https://web.archive.org/web/${stamp}/${url}`;
 }
 
-export function ItemPanel({ item, tags, actions, onClose }: {
+export function ItemPanel({ item, tags, collections, memberOf, actions, onClose }: {
   item: Row;
   tags: string[];
+  collections: Row[];
+  memberOf: Set<string>;
   actions: ItemActions;
   onClose: () => void;
 }) {
@@ -145,6 +149,29 @@ export function ItemPanel({ item, tags, actions, onClose }: {
           }}
           className={FIELD}
         />
+      </div>
+
+      <div>
+        <p className={LABEL}>コレクション</p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {collections.map((c) => {
+            const on = memberOf.has(c.id ?? "");
+            return (
+              <button
+                key={c.id}
+                type="button"
+                aria-pressed={on}
+                onClick={() => guard(actions.toggleCollection(id, c.id ?? "", !on))}
+                className={`min-h-11 cursor-pointer rounded-full border px-4 text-sm ${on ? "border-ink bg-ink text-bg" : "border-line bg-white/50"}`}
+              >
+                {c.name}
+              </button>
+            );
+          })}
+          <button type="button" onClick={() => actions.newCollection(id)} className="min-h-11 cursor-pointer rounded-full border border-dashed border-muted px-4 text-sm text-ink-secondary">
+            ＋ 新しいコレクション
+          </button>
+        </div>
       </div>
 
       <div>

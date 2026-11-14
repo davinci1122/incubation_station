@@ -9,19 +9,21 @@ const KEYS: Record<TableName, readonly string[]> = {
   collections: ["id"], collection_items: ["collection_id", "item_id"], capture_jobs: ["id"],
 };
 
-export type Snapshot = { cursor: number; tables: Record<TableName, Row[]>; syncing: boolean; loaded: boolean };
+/** tagOverrides: 保存中のタグ（サーバーの応答を待たずに表示する）。 */
+export type Snapshot = { cursor: number; tables: Record<TableName, Row[]>; syncing: boolean; loaded: boolean; tagOverrides: Record<string, string[]> };
 
 const CACHE_KEY = "cabinet:data:v1";
 const maps = Object.fromEntries(TABLES.map((t) => [t, new Map<string, Row>()])) as Record<TableName, Map<string, Row>>;
 let cursor = 0;
 let syncing = false;
 let loaded = false;
+const tagOverrides: Record<string, string[]> = {};
 let snapshot: Snapshot = build();
 const listeners = new Set<() => void>();
 
 function build(): Snapshot {
   const tables = Object.fromEntries(TABLES.map((t) => [t, [...maps[t].values()]])) as Record<TableName, Row[]>;
-  return { cursor, tables, syncing, loaded };
+  return { cursor, tables, syncing, loaded, tagOverrides: { ...tagOverrides } };
 }
 
 function emit(): void {
@@ -103,6 +105,12 @@ export function sync(): Promise<void> {
 export function upsert(tables: Partial<Record<TableName, Row[]>>): void {
   apply(tables);
   persist();
+  emit();
+}
+
+export function setTagOverride(itemId: string, names: string[] | null): void {
+  if (names === null) delete tagOverrides[itemId];
+  else tagOverrides[itemId] = names;
   emit();
 }
 

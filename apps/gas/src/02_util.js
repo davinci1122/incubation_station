@@ -44,6 +44,15 @@ function cleanTagName_(name) {
   return String(name === null || name === undefined ? "" : name).replace(/[\s　]+/g, " ").trim();
 }
 
+/** 端末で採番したID（UUID）を検証する。空なら空文字。 */
+function clientId_(db, table, value) {
+  var id = String(value || "").toLowerCase();
+  if (id === "") return "";
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)) throw err_("INVALID", "IDの形式が正しくありません。");
+  if (db.table(table).rows.some(function (r) { return r.id === id; })) throw err_("DUPLICATE", "同じIDの行があります。");
+  return id;
+}
+
 function tagKey_(name) {
   return cleanTagName_(name).toLowerCase();
 }
