@@ -28,6 +28,7 @@ function handle_(db, user, action, params) {
     case "ai.estimate": return aiEstimateAction_(db, user);
     case "ai.curate": return aiSuggestBatch_(db, user, aiKeyOrThrow_(), p.exclude);
     case "ai.apply": return aiApply_(db, user, p.suggestions);
+    case "items.setImage": return itemsSetImage_(db, user, p);
     default: throw err_("UNKNOWN_ACTION", "不明な操作です: " + action);
   }
 }

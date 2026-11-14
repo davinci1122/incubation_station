@@ -572,6 +572,29 @@ test("AIで整理（アプリ）: APIキーがなければ呼ばず、理由を�
   assert.equal(env.ai.calls, 0);
 });
 
+test("手動の画像: 保存して公開し、自動取得では上書きしない。前の画像は捨てる。共有できなければ保存しない", () => {
+  const env = ready();
+  env.pages.set("https://example.com/img1?utm_source=x", { code: 200, body: PAGE });
+  const { item } = env.call("items.create", url("img1"));
+  const data = Buffer.from("jpeg-bytes").toString("base64");
+  const first = env.call("items.setImage", { id: item.id, mime: "image/jpeg", data }).item;
+  assert.match(first.image_url, /^https:\/\/drive\.google\.com\/thumbnail\?id=.+&sz=w1200$/);
+  const firstId = first.image_url.slice("https://drive.google.com/thumbnail?id=".length).split("&")[0];
+  assert.equal(env.drive.files.get(firstId)!.shared, true);
+
+  env.call("items.fetchMeta", { id: item.id });
+  assert.equal(env.call("sync.pull", {}).tables.items.find((i: any) => i.id === item.id).image_url, first.image_url);
+
+  const second = env.call("items.setImage", { id: item.id, mime: "image/png", data }).item;
+  assert.notEqual(second.image_url, first.image_url);
+  assert.equal(env.drive.files.get(firstId)!.trashed, true);
+
+  assert.equal(code(() => env.call("items.setImage", { id: item.id, mime: "image/gif", data })), "INVALID");
+  env.drive.denySharing = true;
+  assert.equal(code(() => env.call("items.setImage", { id: item.id, mime: "image/jpeg", data })), "SHARE_FAILED");
+  assert.equal([...env.drive.files.values()].filter((f) => !f.trashed).length, 1);
+});
+
 test("保守: 30日を過ぎたゴミ箱を消し、関連行も消す。新しい削除は残す", () => {
   const env = ready();
   const keep = env.call("items.create", { ...url("p-keep"), tags: ["t"] }).item;
