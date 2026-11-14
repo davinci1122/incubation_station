@@ -16,6 +16,8 @@ export const metadata: Metadata = {
   title: { default: "INTERNET CABINET", template: "%s — INTERNET CABINET" },
   description: "A personal archive of the web.",
   manifest: `${basePath}/manifest.webmanifest`,
+  icons: { icon: `${basePath}/icon-192.png`, apple: `${basePath}/apple-touch-icon.png` },
+  appleWebApp: { capable: true, title: "Cabinet", statusBarStyle: "default" },
   robots: { index: false, follow: false },
 };
 

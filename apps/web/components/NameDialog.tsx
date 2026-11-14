@@ -2,11 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 
-export function NameDialog({ title, label, initial = "", submit, onSubmit, onClose }: {
+export function NameDialog({ title, label, initial = "", submit, danger, onSubmit, onClose }: {
   title: string;
   label: string;
   initial?: string;
   submit: string;
+  danger?: { label: string; onClick: () => void };
   onSubmit: (value: string) => void;
   onClose: () => void;
 }) {
@@ -46,7 +47,10 @@ export function NameDialog({ title, label, initial = "", submit, onSubmit, onClo
           onChange={(e) => setValue(e.target.value)}
           className="mt-2 block min-h-11 w-full rounded-[22px] border border-line bg-white/70 px-4 text-sm outline-none focus:border-ink"
         />
-        <div className="mt-6 flex justify-end gap-2.5">
+        <div className="mt-6 flex flex-wrap justify-end gap-2.5">
+          {danger && (
+            <button type="button" onClick={danger.onClick} className="mr-auto min-h-11 cursor-pointer px-2 text-sm text-danger">{danger.label}</button>
+          )}
           <button type="button" onClick={onClose} className="min-h-11 cursor-pointer rounded-[22px] border border-line px-5 text-sm">キャンセル</button>
           <button type="submit" disabled={value.trim() === ""} className="min-h-11 cursor-pointer rounded-[22px] bg-ink px-5 text-sm text-bg disabled:opacity-40">
             {submit}

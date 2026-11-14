@@ -1,4 +1,4 @@
-import { call } from "./api";
+import { ApiError, call } from "./api";
 import { getRow, setTagOverride, sync, upsert, type Row } from "./store";
 
 // 変更は1本の列に並べて順番に送る。画面には送信前に反映する（楽観的更新）。
@@ -190,4 +190,52 @@ export function createItem(original: string, normalized: string, domain: string)
     }).catch(() => sync().catch(() => undefined));
   }).catch(() => undefined);
   return { id, done };
+}
+
+// ---------- タグの整理・復元 ----------
+
+/** タグ名を変える。同じ名前のタグが既にあれば、そのタグに統合する。戻り値は統合したかどうか。 */
+export function renameTag(id: string, name: string): Promise<{ merged: boolean }> {
+  return enqueue(async () => {
+    let merged = false;
+    try {
+      await call("tags.update", { id, version: getRow("tags", id)?.version, patch: { name } });
+    } catch (e) {
+      const extra = e instanceof ApiError ? (e.extra as { tag_id?: string } | null) : null;
+      if (!(e instanceof ApiError) || e.code !== "DUPLICATE" || !extra?.tag_id) {
+        await sync().catch(() => undefined);
+        throw e;
+      }
+      await call("tags.merge", { from_id: id, to_id: extra.tag_id });
+      merged = true;
+    }
+    await sync();
+    return { merged };
+  });
+}
+
+export function deleteTag(id: string): Promise<void> {
+  const current = getRow("tags", id);
+  if (current) upsert({ tags: [{ ...current, deleted_at: new Date().toISOString() }] });
+  return enqueue(async () => {
+    try {
+      await call("tags.delete", { id });
+    } finally {
+      await sync().catch(() => undefined);
+    }
+  });
+}
+
+export function restoreItem(id: string): Promise<void> {
+  const current = getRow("items", id);
+  if (current) upsert({ items: [{ ...current, deleted_at: "" }] });
+  return enqueue(async () => {
+    try {
+      const res = await call<{ item: Row }>("items.restore", { id });
+      upsert({ items: [res.item] });
+    } catch (e) {
+      await sync().catch(() => undefined);
+      throw e;
+    }
+  });
 }

@@ -8,10 +8,12 @@ import { CollectionsView, TagsView, type CollectionSummary } from "@/components/
 import { ItemPanel, type ItemActions } from "@/components/ItemPanel";
 import { Login } from "@/components/Login";
 import { NameDialog } from "@/components/NameDialog";
+import { SettingsView } from "@/components/Settings";
 import { Orbs } from "@/components/Orbs";
 import { ApiError } from "@/lib/api";
 import { getToken, signOut, subscribeToken } from "@/lib/google";
-import { createCollection, createItem, deleteCollection, deleteItem, refetchItem, setItemTags, toggleCollection, updateCollection, updateItem } from "@/lib/mutate";
+import { exportBookmarks, exportCsv, exportJson } from "@/lib/export";
+import { createCollection, createItem, deleteCollection, deleteItem, deleteTag, refetchItem, renameTag, restoreItem, setItemTags, toggleCollection, updateCollection, updateItem } from "@/lib/mutate";
 import { closeTransition, openTransition, routeTransition } from "@/lib/transition";
 import { HOME, readRoute, routeHref, type HomeRoute, type Route, type Sort } from "@/lib/route";
 import { clearLocal, getSnapshot, restore, subscribe, sync, type Row, type Snapshot } from "@/lib/store";
@@ -38,6 +40,9 @@ export default function HomePage() {
   const [route, setRoute] = useState<Route>(HOME);
   const [dialog, setDialog] = useState<null | { kind: "new"; itemId?: string } | { kind: "rename"; id: string; name: string }>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [tagEditing, setTagEditing] = useState(false);
+  const [tagDialog, setTagDialog] = useState<null | { id: string; name: string }>(null);
+  const shareHandled = useRef(false);
 
   useEffect(() => {
     restore();
@@ -167,7 +172,7 @@ export default function HomePage() {
       const m = /^#item=([0-9a-f-]{36})$/.exec(window.location.hash);
       const nextId = m ? (m[1] ?? null) : null;
       const prevId = openRef.current;
-      if (prevId && !nextId) closeTransition(prevId, apply);
+      if (prevId && !nextId) closeTransition(apply);
       else if (nextId && !prevId) openTransition(nextId, apply);
       else routeTransition(apply);
     };
@@ -188,7 +193,7 @@ export default function HomePage() {
 
   const closeItem = useCallback(() => {
     if (window.location.hash.startsWith("#item=")) window.history.back();
-    else if (openRef.current) closeTransition(openRef.current, () => setOpenId(null));
+    else if (openRef.current) closeTransition(() => setOpenId(null));
   }, []);
 
   const go = useCallback((next: Route) => {
@@ -221,6 +226,27 @@ export default function HomePage() {
       .catch((e: unknown) => setNotice(`保存できませんでした。${messageOf(e)}`));
   };
 
+  // 共有メニュー・ブックマークレット・ショートカットから渡されたURLを保存する（?add= / ?url= / ?text=）。
+  useEffect(() => {
+    if (!token || shareHandled.current) return;
+    shareHandled.current = true;
+    const q = new URLSearchParams(window.location.search);
+    const raw = [q.get("add"), q.get("url"), q.get("text")].filter(Boolean).join(" ");
+    const found = /https?:\/\/[^\s]+/i.exec(raw);
+    if (!found) return;
+    ["add", "url", "text", "title"].forEach((k) => q.delete(k));
+    const rest = q.toString();
+    window.history.replaceState(null, "", `${window.location.pathname}${rest ? `?${rest}` : ""}`);
+    addUrl(found[0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
+  useEffect(() => {
+    if ("serviceWorker" in navigator && window.location.hostname !== "localhost") {
+      navigator.serviceWorker.register(`${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/sw.js`).catch(() => undefined);
+    }
+  }, []);
+
   const friendly = (p: Promise<void>) =>
     p.catch((e: unknown) => {
       if (e instanceof ApiError && e.code === "CONFLICT") throw new Error("他の端末で更新されていたため、最新の内容を読み込みました。もう一度編集してください。");
@@ -242,6 +268,7 @@ export default function HomePage() {
     { label: "Home", route: HOME, active: route.view === "home" },
     { label: "Collections", route: { view: "collections" }, active: route.view === "collections" || route.view === "collection" },
     { label: "Tags", route: { view: "tags" }, active: route.view === "tags" },
+    { label: "Settings", route: { view: "settings" }, active: route.view === "settings" },
   ];
   const chip = (active: boolean) =>
     `flex min-h-11 shrink-0 cursor-pointer items-center rounded-full border px-4 text-sm ${active ? "border-ink bg-ink text-bg" : "border-line bg-white/50 backdrop-blur"}`;
@@ -286,9 +313,6 @@ export default function HomePage() {
           <button type="button" onClick={() => { setAddError(""); setAdding(true); }} className="hidden min-h-11 cursor-pointer rounded-[22px] bg-ink px-5 text-sm text-bg sm:block">
             URLを追加
           </button>
-          <button type="button" onClick={() => { clearLocal(); void signOut(); }} className="min-h-11 cursor-pointer rounded-[22px] border border-line px-4 text-sm">
-            ログアウト
-          </button>
         </header>
 
         {notice !== "" && (
@@ -301,7 +325,34 @@ export default function HomePage() {
           {route.view === "collections" && (
             <CollectionsView collections={collections} onOpen={(id) => go({ view: "collection", id })} onCreate={() => setDialog({ kind: "new" })} />
           )}
-          {route.view === "tags" && <TagsView tags={tagCounts} onOpen={(name) => go({ ...HOME, tag: name })} />}
+          {route.view === "tags" && (
+            <TagsView
+              tags={tagCounts}
+              editing={tagEditing}
+              onToggleEdit={() => setTagEditing((v) => !v)}
+              onOpen={(name) => go({ ...HOME, tag: name })}
+              onEdit={(name) => {
+                const row = data.tables.tags.find((t) => t.deleted_at === "" && (t.name ?? "").toLowerCase() === name.toLowerCase());
+                if (row) setTagDialog({ id: row.id ?? "", name: row.name ?? "" });
+              }}
+            />
+          )}
+          {route.view === "settings" && (
+            <SettingsView
+              appUrl={typeof window === "undefined" ? "" : `${window.location.origin}${window.location.pathname}`}
+              trash={data.tables.items.filter((i) => i.deleted_at !== "" && i.url_hash).sort((a, b) => ((a.deleted_at ?? "") < (b.deleted_at ?? "") ? 1 : -1)).slice(0, 50)}
+              onRestore={(id) => restoreItem(id).catch((e: unknown) => setNotice(messageOf(e)))}
+              onExport={(kind) => {
+                const tagsOf = (id: string) => tagsByItem.get(id) ?? [];
+                const names = new Map(collections.map((c) => [c.row.id ?? "", c.row.name ?? ""]));
+                const collectionsOf = (id: string) => [...(memberOf.get(id) ?? [])].map((c) => names.get(c) ?? "").filter(Boolean);
+                if (kind === "json") exportJson(data);
+                else if (kind === "csv") exportCsv(liveItems, tagsOf, collectionsOf);
+                else exportBookmarks(liveItems, tagsOf);
+              }}
+              onLogout={() => { clearLocal(); void signOut(); }}
+            />
+          )}
 
           {route.view === "home" && (
             <>
@@ -407,11 +458,9 @@ export default function HomePage() {
             {n.label}
           </button>
         ))}
-        <button type="button" onClick={() => go(HOME)} className="min-h-14 flex-1 cursor-pointer text-[11px] text-ink-secondary" aria-label="ホームの先頭へ">
-          Top
-        </button>
       </nav>
 
+      {open && <button type="button" aria-label="詳細を閉じる" onClick={closeItem} className="fixed inset-0 z-[15] cursor-default bg-ink/5" style={{ transform: "none" }} />}
       {open && (
         <ItemPanel
           item={open}
@@ -433,6 +482,31 @@ export default function HomePage() {
             setDialog(null);
             const id = createCollection(name, itemId);
             if (!itemId) go({ view: "collection", id });
+          }}
+        />
+      )}
+      {tagDialog && (
+        <NameDialog
+          title="タグを編集"
+          label="タグの名前"
+          initial={tagDialog.name}
+          submit="保存"
+          danger={{
+            label: "このタグを削除",
+            onClick: () => {
+              const id = tagDialog.id;
+              setTagDialog(null);
+              deleteTag(id).catch((e: unknown) => setNotice(messageOf(e)));
+            },
+          }}
+          onClose={() => setTagDialog(null)}
+          onSubmit={(name) => {
+            const { id, name: before } = tagDialog;
+            setTagDialog(null);
+            if (name === before) return;
+            renameTag(id, name)
+              .then((r) => setNotice(r.merged ? `「${before}」を「${name}」に統合しました。` : ""))
+              .catch((e: unknown) => setNotice(messageOf(e)));
           }}
         />
       )}

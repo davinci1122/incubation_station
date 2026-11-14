@@ -74,18 +74,34 @@ export function CollectionsView({ collections, onOpen, onCreate }: {
   );
 }
 
-export function TagsView({ tags, onOpen }: { tags: { name: string; count: number }[]; onOpen: (name: string) => void }) {
+export function TagsView({ tags, editing, onToggleEdit, onOpen, onEdit }: {
+  tags: { name: string; count: number }[];
+  editing: boolean;
+  onToggleEdit: () => void;
+  onOpen: (name: string) => void;
+  onEdit: (name: string) => void;
+}) {
   return (
     <section aria-labelledby="tags-title">
-      <p className="text-[11px] uppercase tracking-[0.14em] text-ink-secondary">{tags.length} tags</p>
-      <h1 id="tags-title" className="mt-3 font-display text-5xl font-light leading-none tracking-tight sm:text-7xl">Tags</h1>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.14em] text-ink-secondary">{tags.length} tags</p>
+          <h1 id="tags-title" className="mt-3 font-display text-5xl font-light leading-none tracking-tight sm:text-7xl">Tags</h1>
+        </div>
+        {tags.length > 0 && (
+          <button type="button" aria-pressed={editing} onClick={onToggleEdit} className={`min-h-11 cursor-pointer rounded-[22px] border px-4 text-sm ${editing ? "border-ink bg-ink text-bg" : "border-line bg-white/50"}`}>
+            {editing ? "完了" : "タグを整理"}
+          </button>
+        )}
+      </div>
+      {editing && <p className="mt-4 text-sm text-ink-secondary">タグを押すと、名前の変更・統合・削除ができます。既にある名前に変えると、そのタグに統合されます。</p>}
       {tags.length === 0 ? (
         <p className="mt-16 text-sm text-ink-secondary">アイテムの詳細からタグを付けると、ここに並びます。</p>
       ) : (
         <ul className="mt-10 flex flex-wrap gap-2.5">
           {tags.map((t, i) => (
             <li key={t.name} className="anim-rise" style={{ animationDelay: `${Math.min(i, 20) * 25}ms` }}>
-              <button type="button" onClick={() => onOpen(t.name)} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-full border border-white/80 bg-white/75 py-0 pl-4 pr-3 text-sm leading-none shadow-[0_1px_0_rgba(30,30,30,0.04)] backdrop-blur-xl">
+              <button type="button" onClick={() => (editing ? onEdit(t.name) : onOpen(t.name))} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-full border border-white/80 bg-white/75 py-0 pl-4 pr-3 text-sm leading-none shadow-[0_1px_0_rgba(30,30,30,0.04)] backdrop-blur-xl">
                 <span>{t.name}</span>
                 <span className="flex h-6 min-w-6 items-center justify-center rounded-full bg-accent-light px-1.5 text-[11px] tabular-nums text-ink-secondary">{t.count}</span>
               </button>

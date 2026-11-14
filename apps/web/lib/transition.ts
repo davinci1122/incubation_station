@@ -43,12 +43,7 @@ export function openTransition(id: string, update: () => void): void {
 }
 
 /** 詳細パネルからカードへ戻る。 */
-export function closeTransition(id: string, update: () => void): void {
-  let to: HTMLElement | null = null;
-  const vt = start(() => {
-    update();
-    to = supported() ? media(id) : null;
-    if (to) to.style.setProperty("view-transition-name", "hero");
-  }, "panel");
-  if (vt) void vt.finished.finally(() => to?.style.removeProperty("view-transition-name"));
+export function closeTransition(update: () => void): void {
+  // 閉じるときは画像を別扱いにせず、パネル全体をひとまとまりで右へ送り出す。
+  start(update, "close");
 }
