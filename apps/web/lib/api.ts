@@ -1,5 +1,5 @@
 import { GAS_URL } from "./config";
-import { getToken, renewToken } from "./google";
+import { getToken, renewToken, setToken } from "./google";
 
 export class ApiError extends Error {
   code: string;
@@ -18,8 +18,10 @@ export async function call<T = unknown>(action: string, params: Record<string, u
   try {
     return await send<T>(action, params);
   } catch (e) {
-    if (e instanceof ApiError && e.code === "UNAUTHENTICATED" && (await renewToken())) {
-      return send<T>(action, params);
+    if (e instanceof ApiError && e.code === "UNAUTHENTICATED") {
+      if (await renewToken()) return send<T>(action, params);
+      // 取り直せなければ、ログイン画面に戻す（送信待ちの列は端末に残る）。
+      setToken(null);
     }
     throw e;
   }
