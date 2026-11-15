@@ -15,6 +15,8 @@ type Op = {
   params: Record<string, unknown>;
   /** 対象のID（アイテムなど）。 */
   ref?: string;
+  /** 通信エラーで送れなかった回数。多すぎると、この件だけ飛ばして先へ進む。 */
+  tries?: number;
   /** 送信時に最新の version を付ける対象。 */
   versionOf?: { table: TableName; key: string };
   /** item.update で画面に先行反映している内容。 */
@@ -30,6 +32,7 @@ export type MutationEvent =
 export type OutboxState = { pending: number; conflicts: Conflict[]; offline: boolean };
 
 const OUTBOX_KEY = "cabinet:outbox:v1";
+const MAX_TRIES = 4;
 let outbox: Op[] = [];
 let conflicts: Conflict[] = [];
 let offline = false;
@@ -121,7 +124,20 @@ export async function flush(): Promise<void> {
         if (offline) offline = false;
       } catch (e) {
         const code = e instanceof ApiError ? e.code : "";
+        if (code === "NETWORK" && navigator.onLine) {
+          // つながっているのに送れない件は、先頭に居座ると後ろを全部止める。何度か失敗したら飛ばす。
+          op.tries = (op.tries ?? 0) + 1;
+          if (op.tries >= MAX_TRIES) {
+            outbox.shift();
+            persist();
+            fire({ type: "error", message: "送れなかった件を1つ飛ばしました。残りは続けて送ります。" });
+            await failed(op, e);
+            emit();
+            continue;
+          }
+        }
         if (code === "NETWORK" || code === "UNAUTHENTICATED" || code === "BUSY") {
+          persist();
           offline = code === "NETWORK";
           break;
         }
